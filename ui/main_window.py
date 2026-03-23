@@ -11,7 +11,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Task Manager Clone")
-        self.resize(1100, 700)
+        self.resize(1600, 880)
+        self.setMinimumSize(1450, 820)
 
         main_widget = QWidget()
         main_widget.setObjectName("windowRoot")

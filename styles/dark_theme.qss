@@ -126,6 +126,39 @@ QWidget {
     background: transparent;
 }
 
+#perfSidebar {
+    background-color: rgba(8, 18, 29, 0.74);
+    border: 1px solid rgba(149, 218, 255, 0.12);
+    border-radius: 18px;
+    padding: 10px;
+    outline: none;
+}
+
+#perfSidebar::item {
+    padding: 10px 12px;
+    margin: 4px 0;
+    border-radius: 10px;
+    color: #aebfce;
+}
+
+#perfSidebar::item:selected {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(38, 143, 128, 0.95),
+        stop: 1 rgba(94, 200, 255, 0.9)
+    );
+    color: white;
+}
+
+#perfSidebar::item:hover:!selected {
+    background-color: rgba(110, 180, 222, 0.12);
+}
+
+#perfStack {
+    background: transparent;
+    border: none;
+}
+
 #perfCard,
 #detailSection {
     background-color: rgba(10, 22, 34, 0.84);

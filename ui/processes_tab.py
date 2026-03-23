@@ -69,9 +69,9 @@ class ProcessesTab(QWidget):
 
         self.tree = ClearableTreeWidget()
         self.tree.setObjectName("processTree")
-        self.tree.setColumnCount(7)
+        self.tree.setColumnCount(8)
         self.tree.setHeaderLabels(
-            ["Name", "Publisher", "Window", "PID / Count", "CPU %", "Memory %", "Disk %"]
+            ["Name", "Type", "Publisher", "Window", "PID / Count", "CPU %", "Memory %", "Disk"]
         )
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -83,7 +83,7 @@ class ProcessesTab(QWidget):
         self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.tree)
 
         self.end_btn = QPushButton("End Task")
@@ -109,7 +109,7 @@ class ProcessesTab(QWidget):
         self.timer.start(1500)
 
         self.tree.itemSelectionChanged.connect(self.on_select)
-        self.tree.sortItems(4, Qt.SortOrder.DescendingOrder)
+        self.tree.sortItems(5, Qt.SortOrder.DescendingOrder)
         self.update_tree()
 
     def mousePressEvent(self, event):
@@ -182,24 +182,26 @@ class ProcessesTab(QWidget):
             display_name = f"{display_name} ({group['process_count']})"
 
         item.setText(0, display_name)
-        item.setText(1, group["publisher"])
-        item.setText(2, group["window_display"])
-        item.setText(3, str(group["process_count"]))
-        item.setText(4, group["cpu_display"])
-        item.setText(5, group["memory_display"])
-        item.setText(6, group["disk_display"])
+        item.setText(1, group["type_display"])
+        item.setText(2, group["publisher"])
+        item.setText(3, group["window_display"])
+        item.setText(4, str(group["process_count"]))
+        item.setText(5, group["cpu_display"])
+        item.setText(6, group["memory_display"])
+        item.setText(7, group["disk_display"])
         item.setIcon(0, self._icon_for_entry(group))
 
         self._set_sort_values(
             item,
             {
                 0: group["name"].lower(),
-                1: group["publisher"].lower(),
-                2: (0 if group["has_window"] else 1, group["window_display"].lower()),
-                3: group["process_count"],
-                4: group["cpu_percent"],
-                5: group["memory_percent"],
-                6: group["disk_percent"],
+                1: group["type_display"].lower(),
+                2: group["publisher"].lower(),
+                3: (0 if group["has_window"] else 1, group["window_display"].lower()),
+                4: group["process_count"],
+                5: group["cpu_percent"],
+                6: group["memory_percent"],
+                7: group["disk_mb_per_sec"],
             },
         )
         item.setData(0, ENTRY_ROLE, group)
@@ -213,32 +215,34 @@ class ProcessesTab(QWidget):
             name_tooltips.append(group["exe_path"])
         if name_tooltips:
             item.setToolTip(0, "\n".join(name_tooltips))
-        item.setToolTip(2, group["window_tooltip"])
-        item.setToolTip(5, group["memory_tooltip"])
-        item.setToolTip(6, group["disk_tooltip"])
+        item.setToolTip(3, group["window_tooltip"])
+        item.setToolTip(6, group["memory_tooltip"])
+        item.setToolTip(7, group["disk_tooltip"])
         return item
 
     def _build_child_item(self, child):
         item = SortableTreeWidgetItem()
         item.setText(0, child["name"])
-        item.setText(1, child["publisher"])
-        item.setText(2, child["window_display"])
-        item.setText(3, str(child["pid"]))
-        item.setText(4, child["cpu_display"])
-        item.setText(5, child["memory_display"])
-        item.setText(6, child["disk_display"])
+        item.setText(1, child["type_display"])
+        item.setText(2, child["publisher"])
+        item.setText(3, child["window_display"])
+        item.setText(4, str(child["pid"]))
+        item.setText(5, child["cpu_display"])
+        item.setText(6, child["memory_display"])
+        item.setText(7, child["disk_display"])
         item.setIcon(0, self._icon_for_entry(child))
 
         self._set_sort_values(
             item,
             {
                 0: child["name"].lower(),
-                1: child["publisher"].lower(),
-                2: (0 if child["has_window"] else 1, child["window_display"].lower()),
-                3: child["pid"],
-                4: child["cpu_percent"],
-                5: child["memory_percent"],
-                6: child["disk_percent"],
+                1: child["type_display"].lower(),
+                2: child["publisher"].lower(),
+                3: (0 if child["has_window"] else 1, child["window_display"].lower()),
+                4: child["pid"],
+                5: child["cpu_percent"],
+                6: child["memory_percent"],
+                7: child["disk_rate_mb_per_sec"],
             },
         )
         item.setData(0, ENTRY_ROLE, child)
@@ -252,9 +256,9 @@ class ProcessesTab(QWidget):
             name_tooltips.append(child["exe_path"])
         if name_tooltips:
             item.setToolTip(0, "\n".join(name_tooltips))
-        item.setToolTip(2, child["window_tooltip"])
-        item.setToolTip(5, child["memory_tooltip"])
-        item.setToolTip(6, child["disk_tooltip"])
+        item.setToolTip(3, child["window_tooltip"])
+        item.setToolTip(6, child["memory_tooltip"])
+        item.setToolTip(7, child["disk_tooltip"])
         return item
 
     def _filter_groups(self, groups):
@@ -280,6 +284,7 @@ class ProcessesTab(QWidget):
     def _entry_matches_filter(self, entry):
         searchable = [
             entry["name"].lower(),
+            entry["type_display"].lower(),
             entry["publisher"].lower(),
             entry["window_display"].lower(),
             entry["exe_path"].lower(),

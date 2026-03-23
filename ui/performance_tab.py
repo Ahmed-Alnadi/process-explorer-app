@@ -1,3 +1,5 @@
+import os
+import platform
 import shutil
 import subprocess
 import time
@@ -11,8 +13,10 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QProgressBar,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -179,24 +183,35 @@ class PerformanceTab(QWidget):
         self._cpu_name_value = self._cpu_name()
         self._hostname_value = self._hostname()
 
-        root_layout = QVBoxLayout()
+        root_layout = QHBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(14)
         self.setLayout(root_layout)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setObjectName("perfScroll")
-        root_layout.addWidget(self.scroll)
+        self.sidebar = QListWidget()
+        self.sidebar.setObjectName("perfSidebar")
+        self.sidebar.addItems(["Overview", "CPU", "Memory", "Disk", "Network"])
+        self.sidebar.setFixedWidth(170)
+        root_layout.addWidget(self.sidebar)
 
-        self.content = QWidget()
-        self.content.setObjectName("perfRoot")
-        self.scroll.setWidget(self.content)
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("perfStack")
+        root_layout.addWidget(self.stack)
 
-        content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(4, 4, 4, 12)
-        content_layout.setSpacing(14)
-        self.content.setLayout(content_layout)
+        self._build_overview_page()
+        self._build_focus_pages()
+
+        self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.sidebar.setCurrentRow(0)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.refresh_metrics)
+        self.timer.start(1500)
+
+        self.refresh_metrics()
+
+    def _build_overview_page(self):
+        page, layout = self._create_scroll_page()
 
         metrics_layout = QGridLayout()
         metrics_layout.setHorizontalSpacing(14)
@@ -211,7 +226,7 @@ class PerformanceTab(QWidget):
         metrics_layout.addWidget(self.memory_card, 0, 1)
         metrics_layout.addWidget(self.disk_card, 1, 0)
         metrics_layout.addWidget(self.gpu_temp_card, 1, 1)
-        content_layout.addLayout(metrics_layout)
+        layout.addLayout(metrics_layout)
 
         detail_layout = QGridLayout()
         detail_layout.setHorizontalSpacing(14)
@@ -219,63 +234,80 @@ class PerformanceTab(QWidget):
 
         self.processor_section = DetailSection("Processor")
         self.processor_section.set_rows(
-            [
-                "Model",
-                "Logical Cores",
-                "Physical Cores",
-                "Current Frequency",
-                "Max Frequency",
-                "Uptime",
-            ]
+            ["Model", "Logical Cores", "Physical Cores", "Current Frequency", "Max Frequency", "Uptime"]
         )
-
         self.memory_section = DetailSection("Memory")
         self.memory_section.set_rows(
-            [
-                "Total",
-                "Available",
-                "Used",
-                "Cached",
-                "Swap Used",
-                "Swap Total",
-            ]
+            ["Total", "Available", "Used", "Cached", "Swap Used", "Swap Total"]
         )
-
         self.storage_section = DetailSection("Storage")
         self.storage_section.set_rows(
-            [
-                "System Drive",
-                "Drive Used",
-                "Drive Free",
-                "Read Speed",
-                "Write Speed",
-                "Partitions",
-            ]
+            ["System Drive", "Drive Used", "Drive Free", "Read Speed", "Write Speed", "Partitions"]
         )
-
         self.network_section = DetailSection("Network")
         self.network_section.set_rows(
-            [
-                "Download Speed",
-                "Upload Speed",
-                "Downloaded",
-                "Uploaded",
-                "Connections",
-                "Hostname",
-            ]
+            ["Download Speed", "Upload Speed", "Downloaded", "Uploaded", "Connections", "Hostname"]
         )
 
         detail_layout.addWidget(self.processor_section, 0, 0)
         detail_layout.addWidget(self.memory_section, 0, 1)
         detail_layout.addWidget(self.storage_section, 1, 0)
         detail_layout.addWidget(self.network_section, 1, 1)
-        content_layout.addLayout(detail_layout)
+        layout.addLayout(detail_layout)
 
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.refresh_metrics)
-        self.timer.start(1500)
+        self.stack.addWidget(page)
 
-        self.refresh_metrics()
+    def _build_focus_pages(self):
+        self.cpu_focus_card, self.cpu_focus_details = self._add_focus_page(
+            "CPU",
+            "#5ec8ff",
+            "CPU Analysis",
+            ["Usage", "Current Frequency", "Max Frequency", "Logical Cores", "Physical Cores", "Uptime"],
+        )
+        self.memory_focus_card, self.memory_focus_details = self._add_focus_page(
+            "Memory",
+            "#2ed3a8",
+            "Memory Analysis",
+            ["Load", "Total", "Available", "Used", "Cached", "Swap Used"],
+        )
+        self.disk_focus_card, self.disk_focus_details = self._add_focus_page(
+            "Disk",
+            "#ffb84d",
+            "Disk Analysis",
+            ["Active Time", "System Drive", "Used", "Free", "Read Speed", "Write Speed"],
+        )
+        self.network_focus_card, self.network_focus_details = self._add_focus_page(
+            "Network",
+            "#ff6bb0",
+            "Network Analysis",
+            ["Download Speed", "Upload Speed", "Downloaded", "Uploaded", "Connections", "Hostname"],
+        )
+
+    def _add_focus_page(self, title, accent_color, section_title, rows):
+        page, layout = self._create_scroll_page()
+        card = MetricCard(title, accent_color)
+        section = DetailSection(section_title)
+        section.set_rows(rows)
+        layout.addWidget(card)
+        layout.addWidget(section)
+        self.stack.addWidget(page)
+        return card, section
+
+    def _create_scroll_page(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setObjectName("perfScroll")
+
+        content = QWidget()
+        content.setObjectName("perfRoot")
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(4, 4, 4, 12)
+        layout.setSpacing(14)
+        content.setLayout(layout)
+        return scroll, layout
 
     def refresh_metrics(self):
         cpu_percent = psutil.cpu_percent(interval=None)
@@ -285,15 +317,15 @@ class PerformanceTab(QWidget):
         download_per_sec, upload_per_sec, total_received, total_sent = self._network_metrics()
         gpu_temp_c = self._gpu_temperature()
         cpu_freq = psutil.cpu_freq()
+        physical_cores = psutil.cpu_count(logical=False) or 0
+        logical_cores = psutil.cpu_count(logical=True) or 0
+        system_drive = self._system_drive_usage()
+        connections = self._connection_count_text()
 
         self.cpu_card.update_metric(
             f"{cpu_percent:.1f}%",
             cpu_percent,
-            (
-                f"{self._frequency_text(cpu_freq)} | "
-                f"{psutil.cpu_count(logical=True)} logical / "
-                f"{psutil.cpu_count(logical=False) or 0} physical"
-            ),
+            f"{self._frequency_text(cpu_freq)} | {logical_cores} logical / {physical_cores} physical",
         )
         self.memory_card.update_metric(
             f"{memory.percent:.1f}%",
@@ -305,23 +337,20 @@ class PerformanceTab(QWidget):
             disk_active_percent,
             f"Read {self._format_bytes(read_bytes_per_sec)}/s | Write {self._format_bytes(write_bytes_per_sec)}/s",
         )
-
         if gpu_temp_c is None:
             self.gpu_temp_card.update_metric("N/A", 0, "GPU temperature not available")
         else:
-            gpu_progress = min(max(gpu_temp_c, 0.0), 100.0)
             self.gpu_temp_card.update_metric(
                 f"{gpu_temp_c:.0f} C",
-                gpu_progress,
+                min(max(gpu_temp_c, 0.0), 100.0),
                 "Temperature read from NVIDIA telemetry",
             )
 
-        system_drive = self._system_drive_usage()
         self.processor_section.update_values(
             {
                 "Model": self._cpu_name_value,
-                "Logical Cores": str(psutil.cpu_count(logical=True)),
-                "Physical Cores": str(psutil.cpu_count(logical=False) or 0),
+                "Logical Cores": str(logical_cores),
+                "Physical Cores": str(physical_cores),
                 "Current Frequency": self._frequency_text(cpu_freq),
                 "Max Frequency": self._max_frequency_text(cpu_freq),
                 "Uptime": self._uptime_text(),
@@ -353,7 +382,72 @@ class PerformanceTab(QWidget):
                 "Upload Speed": f"{self._format_bytes(upload_per_sec)}/s",
                 "Downloaded": self._format_bytes(total_received),
                 "Uploaded": self._format_bytes(total_sent),
-                "Connections": self._connection_count_text(),
+                "Connections": connections,
+                "Hostname": self._hostname_value,
+            }
+        )
+
+        self.cpu_focus_card.update_metric(
+            f"{cpu_percent:.1f}%",
+            cpu_percent,
+            "Realtime processor utilization",
+        )
+        self.cpu_focus_details.update_values(
+            {
+                "Usage": f"{cpu_percent:.1f}%",
+                "Current Frequency": self._frequency_text(cpu_freq),
+                "Max Frequency": self._max_frequency_text(cpu_freq),
+                "Logical Cores": str(logical_cores),
+                "Physical Cores": str(physical_cores),
+                "Uptime": self._uptime_text(),
+            }
+        )
+
+        self.memory_focus_card.update_metric(
+            f"{memory.percent:.1f}%",
+            memory.percent,
+            "Physical memory pressure",
+        )
+        self.memory_focus_details.update_values(
+            {
+                "Load": f"{memory.percent:.1f}%",
+                "Total": self._format_bytes(memory.total),
+                "Available": self._format_bytes(memory.available),
+                "Used": self._format_bytes(memory.used),
+                "Cached": self._format_bytes(getattr(memory, "cached", 0)),
+                "Swap Used": self._format_bytes(swap.used),
+            }
+        )
+
+        self.disk_focus_card.update_metric(
+            f"{disk_active_percent:.1f}%",
+            disk_active_percent,
+            f"{system_drive['label']} | {system_drive['used']} used",
+        )
+        self.disk_focus_details.update_values(
+            {
+                "Active Time": f"{disk_active_percent:.1f}%",
+                "System Drive": system_drive["label"],
+                "Used": system_drive["used"],
+                "Free": system_drive["free"],
+                "Read Speed": f"{self._format_bytes(read_bytes_per_sec)}/s",
+                "Write Speed": f"{self._format_bytes(write_bytes_per_sec)}/s",
+            }
+        )
+
+        network_progress = min(((download_per_sec + upload_per_sec) / (10 * 1024 * 1024)) * 100, 100.0)
+        self.network_focus_card.update_metric(
+            f"{self._format_bytes(download_per_sec)}/s",
+            network_progress,
+            f"Upload {self._format_bytes(upload_per_sec)}/s",
+        )
+        self.network_focus_details.update_values(
+            {
+                "Download Speed": f"{self._format_bytes(download_per_sec)}/s",
+                "Upload Speed": f"{self._format_bytes(upload_per_sec)}/s",
+                "Downloaded": self._format_bytes(total_received),
+                "Uploaded": self._format_bytes(total_sent),
+                "Connections": connections,
                 "Hostname": self._hostname_value,
             }
         )
@@ -372,20 +466,13 @@ class PerformanceTab(QWidget):
             "read_time": getattr(counters, "read_time", 0),
             "write_time": getattr(counters, "write_time", 0),
         }
-
         if self._last_disk_snapshot is None:
             self._last_disk_snapshot = snapshot
             return 0.0, 0.0, 0.0
 
         interval = max(now - self._last_disk_snapshot["time"], 0.001)
-        read_bytes_per_sec = max(
-            snapshot["read_bytes"] - self._last_disk_snapshot["read_bytes"],
-            0,
-        ) / interval
-        write_bytes_per_sec = max(
-            snapshot["write_bytes"] - self._last_disk_snapshot["write_bytes"],
-            0,
-        ) / interval
+        read_bytes_per_sec = max(snapshot["read_bytes"] - self._last_disk_snapshot["read_bytes"], 0) / interval
+        write_bytes_per_sec = max(snapshot["write_bytes"] - self._last_disk_snapshot["write_bytes"], 0) / interval
         busy_time_ms = max(
             (snapshot["read_time"] - self._last_disk_snapshot["read_time"])
             + (snapshot["write_time"] - self._last_disk_snapshot["write_time"]),
@@ -412,14 +499,8 @@ class PerformanceTab(QWidget):
             return 0.0, 0.0, counters.bytes_recv, counters.bytes_sent
 
         interval = max(now - self._last_network_snapshot["time"], 0.001)
-        download_per_sec = max(
-            snapshot["bytes_recv"] - self._last_network_snapshot["bytes_recv"],
-            0,
-        ) / interval
-        upload_per_sec = max(
-            snapshot["bytes_sent"] - self._last_network_snapshot["bytes_sent"],
-            0,
-        ) / interval
+        download_per_sec = max(snapshot["bytes_recv"] - self._last_network_snapshot["bytes_recv"], 0) / interval
+        upload_per_sec = max(snapshot["bytes_sent"] - self._last_network_snapshot["bytes_sent"], 0) / interval
         self._last_network_snapshot = snapshot
         return download_per_sec, upload_per_sec, counters.bytes_recv, counters.bytes_sent
 
@@ -468,9 +549,7 @@ class PerformanceTab(QWidget):
 
     def _cpu_name(self):
         try:
-            return (subprocess.check_output(["wmic", "cpu", "get", "name"], text=True, timeout=1.5)
-                .splitlines()[1]
-                .strip())
+            return platform.processor() or "Processor"
         except Exception:
             return "Processor"
 
@@ -487,7 +566,7 @@ class PerformanceTab(QWidget):
             return "N/A"
 
     def _system_drive_usage(self):
-        home_drive = (shutil.os.environ.get("SystemDrive") or "C:") + "\\"
+        home_drive = (os.environ.get("SystemDrive") or "C:") + "\\"
         try:
             usage = psutil.disk_usage(home_drive)
             return {

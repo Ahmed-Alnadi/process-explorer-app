@@ -1,4 +1,5 @@
 import ctypes
+import os
 import shutil
 import subprocess
 import time
@@ -87,12 +88,17 @@ class ProcessManager:
                     "memory_percent": memory_percent,
                     "memory_display": f"{memory_percent:.1f}%",
                     "memory_tooltip": self._format_memory_usage(memory_mb),
-                    "disk_percent": disk_percent,
-                    "disk_display": f"{disk_percent:.1f}%",
+                    "disk_rate_mb_per_sec": process_disk_mb_per_sec,
+                    "disk_display": self._format_disk_rate(process_disk_mb_per_sec),
                     "disk_tooltip": self._format_disk_usage(process_disk_mb_per_sec),
                     "window_display": self._format_window_display(window_titles),
                     "window_tooltip": self._format_window_tooltip(window_titles),
                     "has_window": bool(window_titles),
+                    "type_display": self._classify_process_type(
+                        exe_path=exe_path,
+                        publisher=publisher,
+                        has_window=bool(window_titles),
+                    ),
                     "is_protected": is_protected,
                 }
 
@@ -109,10 +115,10 @@ class ProcessManager:
                         "cpu_percent": 0.0,
                         "memory_percent": 0.0,
                         "memory_mb": 0.0,
-                        "disk_percent": 0.0,
                         "disk_mb_per_sec": 0.0,
                         "window_titles": [],
                         "has_window": False,
+                        "type_display": "Background process",
                         "is_protected": False,
                         "children": [],
                     }
@@ -126,7 +132,6 @@ class ProcessManager:
                 group["cpu_percent"] += cpu_percent
                 group["memory_percent"] += memory_percent
                 group["memory_mb"] += memory_mb
-                group["disk_percent"] += disk_percent
                 group["disk_mb_per_sec"] += process_disk_mb_per_sec
                 group["window_titles"] = self._merge_window_titles(group["window_titles"], window_titles)
                 group["has_window"] = group["has_window"] or bool(window_titles)
@@ -147,14 +152,18 @@ class ProcessManager:
             group["pids"].sort()
             group["children"].sort(key=lambda child: (child["name"].lower(), child["pid"]))
             group["cpu_percent"] = min(group["cpu_percent"], 100.0)
-            group["disk_percent"] = min(group["disk_percent"], 100.0)
             group["cpu_display"] = f"{group['cpu_percent']:.1f}%"
             group["memory_display"] = f"{group['memory_percent']:.1f}%"
             group["memory_tooltip"] = self._format_memory_usage(group["memory_mb"])
-            group["disk_display"] = f"{group['disk_percent']:.1f}%"
+            group["disk_display"] = self._format_disk_rate(group["disk_mb_per_sec"])
             group["disk_tooltip"] = self._format_disk_usage(group["disk_mb_per_sec"])
             group["window_display"] = self._format_window_display(group["window_titles"])
             group["window_tooltip"] = self._format_window_tooltip(group["window_titles"])
+            group["type_display"] = self._classify_process_type(
+                exe_path=group["exe_path"],
+                publisher=group["publisher"],
+                has_window=group["has_window"],
+            )
             groups.append(group)
 
         groups.sort(key=lambda group: group["name"].lower())
@@ -356,6 +365,13 @@ class ProcessManager:
             return f"{disk_mb_per_sec:.1f} MB/s of disk traffic"
         return "No measurable disk traffic"
 
+    def _format_disk_rate(self, disk_mb_per_sec):
+        if disk_mb_per_sec >= 0.1:
+            return f"{disk_mb_per_sec:.1f} MB/s"
+        if disk_mb_per_sec > 0:
+            return f"{disk_mb_per_sec * 1024:.0f} KB/s"
+        return "0 MB/s"
+
     def _group_key(self, name, exe_path):
         normalized_name = (name or "").strip().lower()
         normalized_path = (exe_path or "").strip().lower()
@@ -375,6 +391,18 @@ class ProcessManager:
         if new_publisher == UNKNOWN_PUBLISHER:
             return current_publisher
         return "Multiple"
+
+    def _classify_process_type(self, exe_path, publisher, has_window):
+        if has_window:
+            return "App"
+
+        normalized_path = (exe_path or "").strip().lower()
+        normalized_publisher = (publisher or "").strip().lower()
+        windows_root = (os.environ.get("SystemRoot") or "C:\\Windows").lower()
+        if normalized_path.startswith(windows_root.lower()) or "microsoft" in normalized_publisher:
+            return "Windows process"
+
+        return "Background process"
 
     def _gpu_temperature(self):
         current_time = time.time()

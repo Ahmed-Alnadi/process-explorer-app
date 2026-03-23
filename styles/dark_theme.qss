@@ -1,0 +1,224 @@
+QWidget {
+    background-color: #09131d;
+    color: #eef3f8;
+    font-size: 14px;
+    font-family: "Segoe UI Variable Text", "Bahnschrift", "Segoe UI";
+}
+
+#windowRoot {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 #09131d,
+        stop: 0.55 #0d1926,
+        stop: 1 #122130
+    );
+}
+
+#navSidebar {
+    background-color: rgba(8, 18, 29, 0.86);
+    border: 1px solid rgba(134, 201, 255, 0.14);
+    border-radius: 18px;
+    padding: 10px;
+    outline: none;
+}
+
+#navSidebar::item {
+    padding: 12px 14px;
+    margin: 4px 0;
+    border-radius: 12px;
+    color: #aebfce;
+}
+
+#navSidebar::item:selected {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #1e516d,
+        stop: 1 #2a9d8f
+    );
+    color: white;
+}
+
+#navSidebar::item:hover:!selected {
+    background-color: rgba(110, 180, 222, 0.12);
+}
+
+#contentPanel {
+    background-color: rgba(10, 22, 34, 0.82);
+    border: 1px solid rgba(142, 212, 255, 0.12);
+    border-radius: 24px;
+}
+
+#headerTitle {
+    font-size: 28px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-weight: 600;
+    color: #f4fbff;
+    letter-spacing: 1px;
+    background: transparent;
+}
+
+#headerSubtitle {
+    color: #90a7bb;
+    font-size: 13px;
+    margin-bottom: 4px;
+    background: transparent;
+}
+
+#searchField {
+    background-color: rgba(18, 34, 49, 0.96);
+    border: 1px solid rgba(155, 220, 255, 0.16);
+    border-radius: 14px;
+    padding: 12px 14px;
+    selection-background-color: #2a9d8f;
+}
+
+#searchField:focus {
+    border: 1px solid rgba(87, 195, 255, 0.78);
+}
+
+#pageStack {
+    border: none;
+    background: transparent;
+}
+
+#metricCard {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(18, 41, 58, 0.96),
+        stop: 1 rgba(22, 59, 74, 0.96)
+    );
+    border: 1px solid rgba(155, 220, 255, 0.14);
+    border-radius: 14px;
+    padding: 10px 14px;
+    color: #f4fbff;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#processTree {
+    background-color: rgba(8, 18, 29, 0.72);
+    alternate-background-color: rgba(14, 29, 43, 0.76);
+    border: 1px solid rgba(149, 218, 255, 0.14);
+    border-radius: 18px;
+    padding: 8px;
+    outline: none;
+}
+
+#processTree::item {
+    padding: 8px 6px;
+    border-radius: 8px;
+}
+
+#processTree::item:hover {
+    background-color: rgba(72, 133, 165, 0.16);
+}
+
+#processTree::item:selected {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(34, 88, 116, 0.95),
+        stop: 1 rgba(38, 143, 128, 0.92)
+    );
+    color: white;
+}
+
+#perfScroll,
+#perfRoot {
+    background: transparent;
+}
+
+#perfCard,
+#detailSection {
+    background-color: rgba(10, 22, 34, 0.84);
+    border: 1px solid rgba(149, 218, 255, 0.14);
+    border-radius: 20px;
+}
+
+#perfCardTitle,
+#detailSectionTitle {
+    color: #8fd7ff;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+
+#perfCardValue {
+    color: #f6fbff;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 30px;
+}
+
+#perfCardSubtitle {
+    color: #92a8ba;
+    font-size: 12px;
+}
+
+#perfProgress {
+    border: none;
+    border-radius: 7px;
+    background-color: rgba(255, 255, 255, 0.06);
+    min-height: 10px;
+}
+
+#perfProgress::chunk {
+    border-radius: 7px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #2a9d8f,
+        stop: 1 #5ec8ff
+    );
+}
+
+#detailKey {
+    color: #89a1b4;
+    font-size: 12px;
+}
+
+#detailValue {
+    color: #eef5fb;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+QHeaderView::section {
+    background-color: rgba(19, 40, 56, 0.96);
+    color: #d9e8f3;
+    border: none;
+    border-right: 1px solid rgba(149, 218, 255, 0.08);
+    padding: 10px 8px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#dangerButton {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #8f2d3a,
+        stop: 1 #d1495b
+    );
+    color: white;
+    border: none;
+    border-radius: 14px;
+    padding: 11px 18px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#dangerButton:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #a53744,
+        stop: 1 #ea5f70
+    );
+}
+
+#dangerButton:disabled {
+    background: rgba(110, 124, 137, 0.35);
+    color: rgba(230, 236, 241, 0.55);
+}
+
+#statusLabel {
+    color: #9cb2c4;
+    padding-left: 2px;
+}
+
+QLabel {
+    color: #d2deea;
+    background: transparent;
+}

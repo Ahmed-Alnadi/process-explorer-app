@@ -7,6 +7,8 @@ from ctypes import wintypes
 
 import psutil
 
+from core.subprocess_utils import hidden_subprocess_kwargs
+
 
 PROTECTED_PROCESS_NAMES = {"servicehub.power"}
 UNKNOWN_PUBLISHER = "Unknown"
@@ -313,6 +315,7 @@ class ProcessManager:
                 text=True,
                 timeout=1.5,
                 check=True,
+                **hidden_subprocess_kwargs(),
             )
         except Exception:
             return self._last_disk_active_time_percent
@@ -608,6 +611,7 @@ class ProcessManager:
                 text=True,
                 timeout=1.0,
                 check=True,
+                **hidden_subprocess_kwargs(),
             )
         except Exception:
             return None

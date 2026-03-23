@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.subprocess_utils import hidden_subprocess_kwargs
+
 
 class HistoryGraph(QWidget):
     def __init__(self, line_color):
@@ -553,6 +555,7 @@ class PerformanceTab(QWidget):
                 text=True,
                 timeout=1.0,
                 check=True,
+                **hidden_subprocess_kwargs(),
             )
         except Exception:
             return None
@@ -580,7 +583,12 @@ class PerformanceTab(QWidget):
 
     def _hostname(self):
         try:
-            return subprocess.check_output(["hostname"], text=True, timeout=1.0).strip()
+            return subprocess.check_output(
+                ["hostname"],
+                text=True,
+                timeout=1.0,
+                **hidden_subprocess_kwargs(),
+            ).strip()
         except Exception:
             return "Unknown"
 

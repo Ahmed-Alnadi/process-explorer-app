@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStyledItemDelegate,
     QStyle,
@@ -314,10 +315,18 @@ class ProcessesTab(QWidget):
         self.tree.setItemDelegateForColumn(6, SecondaryTextDelegate(self.tree))
         content_splitter.addWidget(self.tree)
 
+        self.info_scroll = QScrollArea()
+        self.info_scroll.setObjectName("sidePanelScroll")
+        self.info_scroll.setWidgetResizable(True)
+        self.info_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
         self.info_panel = SelectionInfoPanel()
-        self.info_panel.setMinimumWidth(320)
-        self.info_panel.setMaximumWidth(420)
-        content_splitter.addWidget(self.info_panel)
+        self.info_panel.setMinimumWidth(0)
+        self.info_panel.setMaximumWidth(16777215)
+        self.info_scroll.setMinimumWidth(320)
+        self.info_scroll.setMaximumWidth(420)
+        self.info_scroll.setWidget(self.info_panel)
+        content_splitter.addWidget(self.info_scroll)
         content_splitter.setStretchFactor(0, 4)
         content_splitter.setStretchFactor(1, 0)
         content_splitter.setSizes([1120, 360])
@@ -377,8 +386,11 @@ class ProcessesTab(QWidget):
         self.timer.start(1250)
 
         self.tree.selectionModel().selectionChanged.connect(lambda *_: self.on_select())
+        self.tree.pressed.connect(self._on_tree_pressed)
         self.tree.expanded.connect(self._on_item_expanded)
+        self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
+        self.tree.header().sectionPressed.connect(self._on_header_pressed)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
         self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
@@ -411,9 +423,8 @@ class ProcessesTab(QWidget):
     def _rebuild_tree(self):
         selected_entry_id = self._selected_entry_id()
         expanded_keys = self._expanded_group_keys()
-        selected_group_key = self._group_key_for_entry_id(selected_entry_id)
-        if selected_group_key:
-            expanded_keys.add(selected_group_key)
+        vertical_scroll = self.tree.verticalScrollBar().value()
+        horizontal_scroll = self.tree.horizontalScrollBar().value()
         self.current_groups = self._filter_groups(self.latest_groups)
         load_children_keys = set(expanded_keys)
         if self.filter_text:
@@ -429,6 +440,8 @@ class ProcessesTab(QWidget):
         )
         self._apply_expansion_state(expanded_keys)
         self._restore_selection(selected_entry_id)
+        self.tree.verticalScrollBar().setValue(vertical_scroll)
+        self.tree.horizontalScrollBar().setValue(horizontal_scroll)
         self.on_select()
         self._emit_page_status()
 
@@ -640,14 +653,11 @@ class ProcessesTab(QWidget):
         if not index.isValid():
             group_id = self._group_id_for_entry_id(entry_id)
             if group_id:
-                self.model.ensure_group_children_loaded(group_id)
                 group_index = self.model.index_for_entry_id(group_id)
                 if group_index.isValid():
-                    self.tree.expand(group_index)
-                index = self.model.index_for_entry_id(entry_id)
+                    index = group_index
         if index.isValid():
             self.tree.setCurrentIndex(index)
-            self.tree.scrollTo(index)
 
     def _expanded_group_keys(self):
         expanded_keys = set()
@@ -763,12 +773,31 @@ class ProcessesTab(QWidget):
         self.request_refresh.emit()
 
     def _on_item_expanded(self, index):
+        self.pause_refresh_temporarily(1100)
         if index.data(ENTRY_KIND_ROLE) != "group":
             return
         group = index.data(ENTRY_ROLE)
         if not group:
             return
         self.model.ensure_group_children_loaded(group["id"])
+
+    def _on_tree_collapsed(self, _index):
+        self.pause_refresh_temporarily(900)
+
+    def _on_tree_pressed(self, index):
+        if not index.isValid():
+            return
+        self.pause_refresh_temporarily(1100)
+        if index.column() != 0 or index.data(ENTRY_KIND_ROLE) != "group":
+            return
+
+        group = index.data(ENTRY_ROLE)
+        if not group or not group.get("children"):
+            return
+        self.model.ensure_group_children_loaded(group["id"])
+
+    def _on_header_pressed(self, _section):
+        self.pause_refresh_temporarily(1100)
 
     def _format_timestamp(self, timestamp):
         if not timestamp:
@@ -957,6 +986,10 @@ class ProcessesTab(QWidget):
                 self.end_btn,
                 self.info_panel.open_button,
                 self.info_panel.search_button,
+            ):
+                return super().eventFilter(watched, event)
+            if watched in (self.info_scroll, self.info_panel) or self.info_scroll.isAncestorOf(
+                watched
             ):
                 return super().eventFilter(watched, event)
             if watched is not self.tree and not self.tree.isAncestorOf(watched):

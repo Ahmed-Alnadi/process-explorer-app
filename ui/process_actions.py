@@ -6,6 +6,8 @@ from urllib.parse import quote_plus
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
+from core.subprocess_utils import hidden_subprocess_kwargs
+
 
 def open_file_location(path):
     if not path:
@@ -45,7 +47,8 @@ def open_properties(path):
                 "-NoProfile",
                 "-Command",
                 f"Start-Process -FilePath '{escaped_path}' -Verb Properties",
-            ]
+            ],
+            **hidden_subprocess_kwargs(),
         )
         return
     except Exception:

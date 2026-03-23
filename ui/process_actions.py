@@ -3,6 +3,9 @@ import subprocess
 import webbrowser
 from urllib.parse import quote_plus
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+
 
 def open_file_location(path):
     if not path:
@@ -11,11 +14,13 @@ def open_file_location(path):
     normalized_path = os.path.normpath(path)
     if os.path.isfile(normalized_path):
         try:
-            subprocess.Popen(["explorer", f"/select,{normalized_path}"])
+            subprocess.Popen(["explorer.exe", "/select,", normalized_path])
             return
         except Exception:
-            os.startfile(os.path.dirname(normalized_path))
-            return
+            parent_dir = os.path.dirname(normalized_path)
+            if parent_dir:
+                os.startfile(parent_dir)
+                return
 
     if os.path.isdir(normalized_path):
         os.startfile(normalized_path)
@@ -66,4 +71,14 @@ def search_online(query):
     if not query:
         return
 
-    webbrowser.open(f"https://www.google.com/search?q={quote_plus(query)}")
+    url = f"https://www.google.com/search?q={quote_plus(query)}"
+    if QDesktopServices.openUrl(QUrl(url)):
+        return
+
+    try:
+        os.startfile(url)
+        return
+    except Exception:
+        pass
+
+    webbrowser.open_new_tab(url)

@@ -350,6 +350,8 @@ class ProcessManager:
             exe_path,
             ["CompanyName", "FileDescription", "ProductName"],
         ) or {}
+        if not hasattr(version_strings, "get"):
+            version_strings = {}
         metadata = {
             "company": version_strings.get("CompanyName") or UNKNOWN_PUBLISHER,
             "description": version_strings.get("FileDescription") or "",

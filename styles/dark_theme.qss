@@ -18,13 +18,13 @@ QWidget {
     background-color: rgba(8, 18, 29, 0.86);
     border: 1px solid rgba(134, 201, 255, 0.14);
     border-radius: 18px;
-    padding: 10px;
+    padding: 8px;
     outline: none;
 }
 
 #navSidebar::item {
-    padding: 12px 14px;
-    margin: 4px 0;
+    padding: 10px 12px;
+    margin: 3px 0;
     border-radius: 12px;
     color: #aebfce;
 }
@@ -119,6 +119,41 @@ QWidget {
         stop: 1 rgba(38, 143, 128, 0.92)
     );
     color: white;
+}
+
+QSplitter::handle {
+    background: rgba(149, 218, 255, 0.05);
+}
+
+QSplitter::handle:hover {
+    background: rgba(149, 218, 255, 0.14);
+}
+
+#sidePanel {
+    background-color: rgba(12, 25, 37, 0.92);
+    border: 1px solid rgba(149, 218, 255, 0.12);
+    border-radius: 18px;
+}
+
+#sidePanelTitle {
+    color: #f4fbff;
+    font-size: 22px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#sidePanelSubtitle {
+    color: #8fa6b8;
+    font-size: 12px;
+}
+
+#sideKey {
+    color: #88a0b3;
+    font-size: 12px;
+}
+
+#sideValue {
+    color: #eef5fb;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
 
 #perfScroll,
@@ -279,6 +314,20 @@ QMenu::separator {
     color: rgba(230, 236, 241, 0.55);
 }
 
+#secondaryButton {
+    background-color: rgba(18, 34, 49, 0.96);
+    border: 1px solid rgba(155, 220, 255, 0.16);
+    border-radius: 12px;
+    padding: 10px 14px;
+    color: #eef5fb;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#secondaryButton:hover {
+    border: 1px solid rgba(87, 195, 255, 0.62);
+    background-color: rgba(24, 48, 68, 0.98);
+}
+
 #statusLabel {
     color: #9cb2c4;
     padding-left: 2px;
@@ -287,4 +336,14 @@ QMenu::separator {
 QLabel {
     color: #d2deea;
     background: transparent;
+}
+
+QStatusBar {
+    background-color: rgba(8, 18, 29, 0.94);
+    border-top: 1px solid rgba(149, 218, 255, 0.12);
+}
+
+#statusBarLabel {
+    color: #b5c9d9;
+    padding: 3px 6px;
 }

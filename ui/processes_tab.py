@@ -1,17 +1,21 @@
 import time
 
+import psutil
 from PySide6.QtCore import QEvent, QFileInfo, QModelIndex, QObject, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFileIconProvider,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QStyledItemDelegate,
     QStyle,
     QStyleOptionViewItem,
@@ -142,8 +146,113 @@ class ProcessRefreshWorker(QObject):
             self._busy = False
 
 
+class SelectionInfoPanel(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("sidePanel")
+        self._value_labels = {}
+        self.current_entry = None
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        self.setLayout(layout)
+
+        self.title_label = QLabel("Selection")
+        self.title_label.setObjectName("sidePanelTitle")
+        layout.addWidget(self.title_label)
+
+        self.subtitle_label = QLabel("Pick an app or process to inspect it.")
+        self.subtitle_label.setObjectName("sidePanelSubtitle")
+        self.subtitle_label.setWordWrap(True)
+        layout.addWidget(self.subtitle_label)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(8)
+        layout.addLayout(grid)
+
+        fields = [
+            "Type",
+            "Publisher",
+            "Path",
+            "Window",
+            "PID / Count",
+            "CPU",
+            "Memory",
+            "Disk",
+            "Product",
+            "Description",
+            "User",
+            "Started",
+            "Threads",
+            "Command",
+        ]
+        for row, field in enumerate(fields):
+            key = QLabel(field)
+            key.setObjectName("sideKey")
+            value = QLabel("--")
+            value.setObjectName("sideValue")
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(key, row, 0, Qt.AlignmentFlag.AlignTop)
+            grid.addWidget(value, row, 1)
+            self._value_labels[field] = value
+
+        self.open_button = QPushButton("Open File Location")
+        self.open_button.setObjectName("secondaryButton")
+        self.search_button = QPushButton("Search Online")
+        self.search_button.setObjectName("secondaryButton")
+        actions = QHBoxLayout()
+        actions.setSpacing(10)
+        actions.addWidget(self.open_button)
+        actions.addWidget(self.search_button)
+        layout.addLayout(actions)
+        layout.addStretch()
+
+    def set_entry(self, entry, extra_details):
+        self.current_entry = entry
+        if entry is None:
+            self.title_label.setText("Selection")
+            self.subtitle_label.setText("Pick an app or process to inspect it.")
+            for label in self._value_labels.values():
+                label.setText("--")
+            self.open_button.setEnabled(False)
+            self.search_button.setEnabled(False)
+            return
+
+        self.title_label.setText(entry["name"])
+        self.subtitle_label.setText(
+            "On-demand details for the selected item."
+        )
+
+        field_values = {
+            "Type": entry["type_display"],
+            "Publisher": entry["publisher"],
+            "Path": entry["exe_path"] or "Unavailable",
+            "Window": entry["window_display"],
+            "PID / Count": str(entry["pid"]) if "pid" in entry else str(entry["process_count"]),
+            "CPU": entry["cpu_display"],
+            "Memory": f"{entry['memory_display']}  {entry['memory_value_display']}",
+            "Disk": entry["disk_display"],
+            "Product": entry.get("product_name") or "Unknown",
+            "Description": entry.get("description") or "Unknown",
+            "User": extra_details["user"],
+            "Started": extra_details["started"],
+            "Threads": extra_details["threads"],
+            "Command": extra_details["command"],
+        }
+
+        for field, value in field_values.items():
+            self._value_labels[field].setText(value)
+
+        self.open_button.setEnabled(bool(entry["exe_path"]))
+        self.search_button.setEnabled(True)
+
+
 class ProcessesTab(QWidget):
     request_refresh = Signal()
+    page_status_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -170,6 +279,10 @@ class ProcessesTab(QWidget):
         summary_layout.addStretch()
         summary_layout.addWidget(self.last_updated_label, 0, Qt.AlignmentFlag.AlignRight)
         layout.addLayout(summary_layout)
+
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        content_splitter.setChildrenCollapsible(False)
+        content_splitter.setHandleWidth(10)
 
         self.tree = ClearableTreeView()
         self.tree.setObjectName("processTree")
@@ -199,7 +312,16 @@ class ProcessesTab(QWidget):
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.tree.setItemDelegateForColumn(6, SecondaryTextDelegate(self.tree))
-        layout.addWidget(self.tree)
+        content_splitter.addWidget(self.tree)
+
+        self.info_panel = SelectionInfoPanel()
+        self.info_panel.setMinimumWidth(320)
+        self.info_panel.setMaximumWidth(420)
+        content_splitter.addWidget(self.info_panel)
+        content_splitter.setStretchFactor(0, 4)
+        content_splitter.setStretchFactor(1, 0)
+        content_splitter.setSizes([1120, 360])
+        layout.addWidget(content_splitter)
 
         self.end_btn = QPushButton("End Task")
         self.end_btn.setObjectName("dangerButton")
@@ -227,6 +349,17 @@ class ProcessesTab(QWidget):
         self.default_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.icon_cache = {}
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
+        self.entry_detail_cache = {}
+        self._column_labels = [
+            "Name",
+            "Type",
+            "Publisher",
+            "Window",
+            "PID / Count",
+            "CPU %",
+            "Memory %",
+            "Disk",
+        ]
         self._active = True
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
@@ -247,9 +380,15 @@ class ProcessesTab(QWidget):
         self.tree.expanded.connect(self._on_item_expanded)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
+        self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
+        self.info_panel.open_button.clicked.connect(self._open_selected_location)
+        self.info_panel.search_button.clicked.connect(self._search_selected_entry)
         self._restore_sort_settings()
+        self._restore_column_visibility()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
+        self.info_panel.set_entry(None, self._blank_extra_details())
         self.request_refresh.emit()
 
     def mousePressEvent(self, event):
@@ -291,14 +430,17 @@ class ProcessesTab(QWidget):
         self._apply_expansion_state(expanded_keys)
         self._restore_selection(selected_entry_id)
         self.on_select()
+        self._emit_page_status()
 
     def on_select(self):
         entry = self._selected_entry()
         if entry is None:
             self.end_btn.setEnabled(False)
+            self.info_panel.set_entry(None, self._blank_extra_details())
             return
 
         self.end_btn.setEnabled(not entry["is_protected"])
+        self.info_panel.set_entry(entry, self._entry_additional_details(entry))
 
     def end_task(self):
         entry = self._selected_entry()
@@ -611,6 +753,7 @@ class ProcessesTab(QWidget):
                 self.last_updated_label,
                 f"List updated: {self._format_timestamp(updated_at)}",
             )
+        self._emit_page_status()
 
     def _resume_refresh(self):
         if not self._active:
@@ -661,6 +804,121 @@ class ProcessesTab(QWidget):
         elif chosen_action == search_action:
             search_online(f"{entry['name']} {entry['publisher']}")
 
+    def show_column_chooser(self, global_pos=None):
+        self._show_column_chooser(None, global_pos)
+
+    def _show_column_chooser(self, _position=None, global_pos=None):
+        menu = QMenu(self)
+        for column, label in enumerate(self._column_labels):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not self.tree.isColumnHidden(column))
+            if column == 0:
+                action.setEnabled(False)
+            else:
+                action.toggled.connect(
+                    lambda checked, col=column: self._set_column_visible(col, checked)
+                )
+
+        if global_pos is None:
+            global_pos = self.tree.header().mapToGlobal(self.tree.header().rect().bottomLeft())
+        menu.exec(global_pos)
+
+    def _set_column_visible(self, column, visible):
+        self.tree.setColumnHidden(column, not visible)
+        self.settings.setValue(f"processes/column_hidden_{column}", not visible)
+
+    def _restore_column_visibility(self):
+        for column in range(1, len(self._column_labels)):
+            hidden = self.settings.value(f"processes/column_hidden_{column}", False, type=bool)
+            self.tree.setColumnHidden(column, hidden)
+
+    def _emit_page_status(self):
+        if not self.current_groups:
+            self.page_status_changed.emit("Processes: no matching items")
+            return
+
+        app_count = sum(1 for group in self.current_groups if group["type_display"] == "App")
+        background_count = sum(
+            1 for group in self.current_groups if group["type_display"] == "Background process"
+        )
+        windows_count = sum(
+            1 for group in self.current_groups if group["type_display"] == "Windows process"
+        )
+        total_children = sum(group["process_count"] for group in self.current_groups)
+        self.page_status_changed.emit(
+            (
+                f"Processes: {len(self.current_groups)} groups | "
+                f"Apps {app_count} | Background {background_count} | "
+                f"Windows {windows_count} | PIDs {total_children}"
+            )
+        )
+
+    def _entry_additional_details(self, entry):
+        cached = self.entry_detail_cache.get(entry["id"])
+        if cached is not None:
+            return cached
+
+        extra = self._blank_extra_details()
+        primary_pid = None
+        if "pid" in entry:
+            primary_pid = entry["pid"]
+        elif entry.get("pids"):
+            primary_pid = entry["pids"][0]
+
+        if primary_pid is None:
+            self.entry_detail_cache[entry["id"]] = extra
+            return extra
+
+        try:
+            process = psutil.Process(primary_pid)
+        except Exception:
+            self.entry_detail_cache[entry["id"]] = extra
+            return extra
+
+        try:
+            extra["user"] = process.username()
+        except Exception:
+            extra["user"] = "Unavailable"
+
+        try:
+            create_time = process.create_time()
+            extra["started"] = time.strftime("%Y-%m-%d %I:%M:%S %p", time.localtime(create_time))
+        except Exception:
+            extra["started"] = "Unavailable"
+
+        try:
+            extra["threads"] = str(process.num_threads())
+        except Exception:
+            extra["threads"] = "Unavailable"
+
+        try:
+            command = " ".join(process.cmdline()).strip()
+            extra["command"] = command or "Unavailable"
+        except Exception:
+            extra["command"] = "Unavailable"
+
+        self.entry_detail_cache[entry["id"]] = extra
+        return extra
+
+    def _blank_extra_details(self):
+        return {
+            "user": "--",
+            "started": "--",
+            "threads": "--",
+            "command": "--",
+        }
+
+    def _open_selected_location(self):
+        entry = self.info_panel.current_entry or self._selected_entry()
+        if entry:
+            open_file_location(entry["exe_path"])
+
+    def _search_selected_entry(self):
+        entry = self.info_panel.current_entry or self._selected_entry()
+        if entry:
+            search_online(f"{entry['name']} {entry['publisher']}")
+
     def _confirm_end_task(self, entry):
         if entry["is_protected"]:
             return False
@@ -695,7 +953,11 @@ class ProcessesTab(QWidget):
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress:
-            if watched is self.end_btn:
+            if watched in (
+                self.end_btn,
+                self.info_panel.open_button,
+                self.info_panel.search_button,
+            ):
                 return super().eventFilter(watched, event)
             if watched is not self.tree and not self.tree.isAncestorOf(watched):
                 self.clear_selection()

@@ -64,6 +64,7 @@ class DetailRefreshWorker(QObject):
 
 class DetailsTab(QWidget):
     request_refresh = Signal()
+    page_status_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -132,6 +133,16 @@ class DetailsTab(QWidget):
             "gpu_temp_display": "GPU Temp: N/A",
         }
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
+        self._column_labels = [
+            "Name",
+            "PID",
+            "Type",
+            "Publisher",
+            "Window",
+            "CPU %",
+            "Memory %",
+            "Disk",
+        ]
         self._active = True
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
@@ -151,7 +162,10 @@ class DetailsTab(QWidget):
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
+        self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
         self._restore_sort_settings()
+        self._restore_column_visibility()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
         self.request_refresh.emit()
@@ -192,6 +206,7 @@ class DetailsTab(QWidget):
         self.tree.sortItems(self.tree.sortColumn(), self.tree.header().sortIndicatorOrder())
         self._restore_selection(selected_entry_id)
         self.on_select()
+        self._emit_page_status()
 
     def on_select(self):
         entry = self._selected_entry()
@@ -329,6 +344,42 @@ class DetailsTab(QWidget):
             index = self.tree.indexOfTopLevelItem(item)
             if index >= 0:
                 self.tree.takeTopLevelItem(index)
+
+    def show_column_chooser(self, global_pos=None):
+        self._show_column_chooser(None, global_pos)
+
+    def _show_column_chooser(self, _position=None, global_pos=None):
+        menu = QMenu(self)
+        for column, label in enumerate(self._column_labels):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not self.tree.isColumnHidden(column))
+            if column == 0:
+                action.setEnabled(False)
+            else:
+                action.toggled.connect(
+                    lambda checked, col=column: self._set_column_visible(col, checked)
+                )
+
+        if global_pos is None:
+            global_pos = self.tree.header().mapToGlobal(self.tree.header().rect().bottomLeft())
+        menu.exec(global_pos)
+
+    def _set_column_visible(self, column, visible):
+        self.tree.setColumnHidden(column, not visible)
+        self.settings.setValue(f"details/column_hidden_{column}", not visible)
+
+    def _restore_column_visibility(self):
+        for column in range(1, len(self._column_labels)):
+            hidden = self.settings.value(f"details/column_hidden_{column}", False, type=bool)
+            self.tree.setColumnHidden(column, hidden)
+
+    def _emit_page_status(self):
+        visible = self._filter_details(self.latest_details)
+        if not visible:
+            self.page_status_changed.emit("Details: no matching items")
+            return
+        self.page_status_changed.emit(f"Details: {len(visible)} processes visible")
 
     def _show_context_menu(self, position):
         item = self.tree.itemAt(position)

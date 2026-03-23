@@ -21,11 +21,14 @@ class ProcessManager:
         self._last_disk = {}
         self._last_cpu = {}
         self._last_sample_time = time.time()
-        self._last_system_disk = None
         self._last_disk_active_time_percent = 0.0
+        self._last_disk_active_time_update = 0.0
         self._cpu_count = max(psutil.cpu_count() or 1, 1)
         self._memory_total = max(psutil.virtual_memory().total, 1)
-        self._publisher_cache = {}
+        self._memory_cache = {}
+        self._memory_cache_ttl = 3.5
+        self._metadata_cache = {}
+        self._window_scan_ttl = 5.0
         self._last_window_scan_update = 0.0
         self._cached_window_titles_by_pid = {}
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
@@ -37,115 +40,64 @@ class ProcessManager:
         interval = max(current_time - self._last_sample_time, 0.001)
         self._last_sample_time = current_time
 
-        total_disk_bytes = self._sample_system_disk(interval)
         window_titles_by_pid = self._visible_windows_by_pid()
-        active_pids = set()
+        process_entries, active_pids = self._collect_process_entries(
+            interval,
+            window_titles_by_pid,
+        )
         grouped_processes = {}
 
-        for proc in psutil.process_iter(
-            ["pid", "name", "memory_info", "io_counters", "exe", "cpu_times"]
-        ):
-            try:
-                pid = proc.info["pid"]
-                raw_name = proc.info.get("name") or "Unknown"
-                if raw_name.lower() == "system idle process":
-                    continue
-
-                exe_path = proc.info.get("exe") or ""
-                display_name = self._display_name(raw_name)
-                publisher = self._publisher_for_exe(exe_path)
-                is_protected = self.is_protected_process(raw_name)
-                window_titles = window_titles_by_pid.get(pid, [])
-
-                active_pids.add(pid)
-
-                cpu_percent = self._sample_process_cpu_percent(proc, interval)
-
-                memory_info = proc.info.get("memory_info")
-                memory_bytes = memory_info.rss if memory_info else 0
-                memory_mb = memory_bytes / (1024 * 1024)
-                memory_percent = (memory_bytes / self._memory_total) * 100
-
-                disk_io = proc.info.get("io_counters")
-                process_disk_bytes = self._sample_process_disk_bytes(pid, disk_io)
-                process_disk_mb_per_sec = process_disk_bytes / (1024 * 1024) / interval
-                if total_disk_bytes > 0:
-                    disk_percent = min((process_disk_bytes / total_disk_bytes) * 100, 100.0)
-                else:
-                    disk_percent = 0.0
-
-                child = {
-                    "id": f"pid:{pid}",
-                    "group_key": self._group_key(raw_name, exe_path),
-                    "raw_name": raw_name,
-                    "name": display_name,
-                    "publisher": publisher,
-                    "pid": pid,
-                    "pids": [pid],
-                    "exe_path": exe_path,
-                    "cpu_percent": cpu_percent,
-                    "cpu_display": f"{cpu_percent:.1f}%",
-                    "memory_percent": memory_percent,
-                    "memory_display": f"{memory_percent:.1f}%",
-                    "memory_tooltip": self._format_memory_usage(memory_mb),
-                    "disk_rate_mb_per_sec": process_disk_mb_per_sec,
-                    "disk_display": self._format_disk_rate(process_disk_mb_per_sec),
-                    "disk_tooltip": self._format_disk_usage(process_disk_mb_per_sec),
-                    "window_display": self._format_window_display(window_titles),
-                    "window_tooltip": self._format_window_tooltip(window_titles),
-                    "has_window": bool(window_titles),
-                    "type_display": self._classify_process_type(
-                        exe_path=exe_path,
-                        publisher=publisher,
-                        has_window=bool(window_titles),
-                    ),
-                    "is_protected": is_protected,
+        for child in process_entries:
+            group = grouped_processes.get(child["group_key"])
+            if group is None:
+                group = {
+                    "id": f"group:{child['group_key']}",
+                    "group_key": child["group_key"],
+                    "name": child["name"],
+                    "publisher": child["publisher"],
+                    "description": child["description"],
+                    "product_name": child["product_name"],
+                    "process_count": 0,
+                    "pids": [],
+                    "exe_path": child["exe_path"],
+                    "cpu_percent": 0.0,
+                    "memory_percent": 0.0,
+                    "memory_mb": 0.0,
+                    "disk_mb_per_sec": 0.0,
+                    "window_titles": [],
+                    "has_window": False,
+                    "type_display": "Background process",
+                    "is_protected": False,
+                    "children": [],
                 }
+                grouped_processes[child["group_key"]] = group
 
-                group = grouped_processes.get(child["group_key"])
-                if group is None:
-                    group = {
-                        "id": f"group:{child['group_key']}",
-                        "group_key": child["group_key"],
-                        "name": display_name,
-                        "publisher": publisher,
-                        "process_count": 0,
-                        "pids": [],
-                        "exe_path": exe_path,
-                        "cpu_percent": 0.0,
-                        "memory_percent": 0.0,
-                        "memory_mb": 0.0,
-                        "disk_mb_per_sec": 0.0,
-                        "window_titles": [],
-                        "has_window": False,
-                        "type_display": "Background process",
-                        "is_protected": False,
-                        "children": [],
-                    }
-                    grouped_processes[child["group_key"]] = group
+            group["process_count"] += 1
+            group["pids"].append(child["pid"])
+            if not group["exe_path"] and child["exe_path"]:
+                group["exe_path"] = child["exe_path"]
+            group["publisher"] = self._merge_publishers(group["publisher"], child["publisher"])
+            group["description"] = self._merge_metadata_text(
+                group["description"],
+                child["description"],
+            )
+            group["product_name"] = self._merge_metadata_text(
+                group["product_name"],
+                child["product_name"],
+            )
+            group["cpu_percent"] += child["cpu_percent"]
+            group["memory_percent"] += child["memory_percent"]
+            group["memory_mb"] += child["memory_mb"]
+            group["disk_mb_per_sec"] += child["disk_rate_mb_per_sec"]
+            group["window_titles"] = self._merge_window_titles(
+                group["window_titles"],
+                child["window_titles"],
+            )
+            group["has_window"] = group["has_window"] or child["has_window"]
+            group["is_protected"] = group["is_protected"] or child["is_protected"]
+            group["children"].append(child)
 
-                group["process_count"] += 1
-                group["pids"].append(pid)
-                if not group["exe_path"] and exe_path:
-                    group["exe_path"] = exe_path
-                group["publisher"] = self._merge_publishers(group["publisher"], publisher)
-                group["cpu_percent"] += cpu_percent
-                group["memory_percent"] += memory_percent
-                group["memory_mb"] += memory_mb
-                group["disk_mb_per_sec"] += process_disk_mb_per_sec
-                group["window_titles"] = self._merge_window_titles(group["window_titles"], window_titles)
-                group["has_window"] = group["has_window"] or bool(window_titles)
-                group["is_protected"] = group["is_protected"] or is_protected
-                group["children"].append(child)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        self._last_disk = {
-            pid: counters for pid, counters in self._last_disk.items() if pid in active_pids
-        }
-        self._last_cpu = {
-            pid: cpu_time for pid, cpu_time in self._last_cpu.items() if pid in active_pids
-        }
+        self._prune_pid_caches(active_pids)
 
         groups = []
         for group in grouped_processes.values():
@@ -154,6 +106,7 @@ class ProcessManager:
             group["cpu_percent"] = min(group["cpu_percent"], 100.0)
             group["cpu_display"] = f"{group['cpu_percent']:.1f}%"
             group["memory_display"] = f"{group['memory_percent']:.1f}%"
+            group["memory_value_display"] = self._format_memory_amount(group["memory_mb"])
             group["memory_tooltip"] = self._format_memory_usage(group["memory_mb"])
             group["disk_display"] = self._format_disk_rate(group["disk_mb_per_sec"])
             group["disk_tooltip"] = self._format_disk_usage(group["disk_mb_per_sec"])
@@ -169,10 +122,26 @@ class ProcessManager:
         groups.sort(key=lambda group: group["name"].lower())
         return groups
 
+    def list_process_details(self):
+        current_time = time.time()
+        interval = max(current_time - self._last_sample_time, 0.001)
+        self._last_sample_time = current_time
+
+        window_titles_by_pid = self._visible_windows_by_pid()
+        process_entries, active_pids = self._collect_process_entries(
+            interval,
+            window_titles_by_pid,
+        )
+
+        self._prune_pid_caches(active_pids)
+
+        process_entries.sort(key=lambda entry: (entry["name"].lower(), entry["pid"]))
+        return process_entries
+
     def system_summary(self):
         cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
-        disk_active_time_percent = self._last_disk_active_time_percent
+        disk_active_time_percent = self._disk_active_time_percent()
         gpu_temp_c = self._gpu_temperature()
         return {
             "cpu_percent": cpu_percent,
@@ -211,6 +180,89 @@ class ProcessManager:
         for process in processes:
             process.terminate()
 
+    def _collect_process_entries(self, interval, window_titles_by_pid):
+        active_pids = set()
+        process_entries = []
+        sample_time = time.time()
+
+        for proc in psutil.process_iter(
+            ["pid", "name", "memory_info", "io_counters", "exe", "cpu_times"]
+        ):
+            try:
+                pid = proc.info["pid"]
+                raw_name = proc.info.get("name") or "Unknown"
+                if raw_name.lower() == "system idle process":
+                    continue
+
+                exe_path = proc.info.get("exe") or ""
+                display_name = self._display_name(raw_name)
+                metadata = self._metadata_for_exe(exe_path)
+                publisher = metadata["company"]
+                is_protected = self.is_protected_process(raw_name)
+                window_titles = window_titles_by_pid.get(pid, [])
+
+                active_pids.add(pid)
+
+                cpu_percent = self._sample_process_cpu_percent(proc, interval)
+
+                memory_bytes = self._process_memory_bytes(proc, sample_time)
+                memory_mb = memory_bytes / (1024 * 1024)
+                memory_percent = (memory_bytes / self._memory_total) * 100
+
+                disk_io = proc.info.get("io_counters")
+                process_disk_bytes = self._sample_process_disk_bytes(pid, disk_io)
+                process_disk_mb_per_sec = process_disk_bytes / (1024 * 1024) / interval
+
+                process_entries.append(
+                    {
+                        "id": f"pid:{pid}",
+                        "group_key": self._group_key(raw_name, exe_path),
+                        "raw_name": raw_name,
+                        "name": display_name,
+                        "publisher": publisher,
+                        "description": metadata["description"],
+                        "product_name": metadata["product_name"],
+                        "pid": pid,
+                        "pids": [pid],
+                        "exe_path": exe_path,
+                        "cpu_percent": cpu_percent,
+                        "cpu_display": f"{cpu_percent:.1f}%",
+                        "memory_percent": memory_percent,
+                        "memory_mb": memory_mb,
+                        "memory_display": f"{memory_percent:.1f}%",
+                        "memory_value_display": self._format_memory_amount(memory_mb),
+                        "memory_tooltip": self._format_memory_usage(memory_mb),
+                        "disk_rate_mb_per_sec": process_disk_mb_per_sec,
+                        "disk_display": self._format_disk_rate(process_disk_mb_per_sec),
+                        "disk_tooltip": self._format_disk_usage(process_disk_mb_per_sec),
+                        "window_display": self._format_window_display(window_titles),
+                        "window_tooltip": self._format_window_tooltip(window_titles),
+                        "window_titles": list(window_titles),
+                        "has_window": bool(window_titles),
+                        "type_display": self._classify_process_type(
+                            exe_path=exe_path,
+                            publisher=publisher,
+                            has_window=bool(window_titles),
+                        ),
+                        "is_protected": is_protected,
+                    }
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        return process_entries, active_pids
+
+    def _prune_pid_caches(self, active_pids):
+        self._last_disk = {
+            pid: counters for pid, counters in self._last_disk.items() if pid in active_pids
+        }
+        self._last_cpu = {
+            pid: cpu_time for pid, cpu_time in self._last_cpu.items() if pid in active_pids
+        }
+        self._memory_cache = {
+            pid: snapshot for pid, snapshot in self._memory_cache.items() if pid in active_pids
+        }
+
     def _sample_process_cpu_percent(self, proc, interval):
         cpu_times = proc.info.get("cpu_times")
         if not cpu_times:
@@ -239,55 +291,74 @@ class ProcessManager:
 
         return max((current_read - previous_read) + (current_write - previous_write), 0)
 
-    def _sample_system_disk(self, interval):
-        disk_counters = psutil.disk_io_counters()
-        if disk_counters is None:
-            self._last_system_disk = None
-            self._last_disk_active_time_percent = 0.0
-            return 0
+    def _disk_active_time_percent(self):
+        current_time = time.time()
+        if current_time - self._last_disk_active_time_update < 5.0:
+            return self._last_disk_active_time_percent
 
-        current_snapshot = {
-            "read_bytes": disk_counters.read_bytes,
-            "write_bytes": disk_counters.write_bytes,
-            "read_time": getattr(disk_counters, "read_time", 0),
-            "write_time": getattr(disk_counters, "write_time", 0),
-        }
-        if self._last_system_disk is None:
-            self._last_system_disk = current_snapshot
-            self._last_disk_active_time_percent = 0.0
-            return 0
+        self._last_disk_active_time_update = current_time
+        self._last_disk_active_time_percent = self._read_disk_active_time_percent()
+        return self._last_disk_active_time_percent
 
-        total_bytes = max(
-            (current_snapshot["read_bytes"] - self._last_system_disk["read_bytes"])
-            + (current_snapshot["write_bytes"] - self._last_system_disk["write_bytes"]),
-            0,
+    def _read_disk_active_time_percent(self):
+        command = (
+            "Get-Counter '\\PhysicalDisk(_Total)\\% Idle Time' -ErrorAction SilentlyContinue | "
+            "Select-Object -ExpandProperty CounterSamples | "
+            "ForEach-Object { $_.CookedValue.ToString([System.Globalization.CultureInfo]::InvariantCulture) }"
         )
-        busy_time_ms = max(
-            (current_snapshot["read_time"] - self._last_system_disk["read_time"])
-            + (current_snapshot["write_time"] - self._last_system_disk["write_time"]),
-            0,
-        )
-        self._last_system_disk = current_snapshot
-        self._last_disk_active_time_percent = min(
-            (busy_time_ms / max(interval * 1000.0, 1.0)) * 100.0,
-            100.0,
-        )
-        return total_bytes
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=True,
+            )
+        except Exception:
+            return self._last_disk_active_time_percent
 
-    def _publisher_for_exe(self, exe_path):
+        values = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                values.append(float(line))
+            except ValueError:
+                continue
+
+        if not values:
+            return self._last_disk_active_time_percent
+
+        idle_percent = min(max(values[0], 0.0), 100.0)
+        return max(0.0, 100.0 - idle_percent)
+
+    def _metadata_for_exe(self, exe_path):
         normalized_path = (exe_path or "").strip().lower()
         if not normalized_path:
-            return UNKNOWN_PUBLISHER
+            return {
+                "company": UNKNOWN_PUBLISHER,
+                "description": "",
+                "product_name": "",
+            }
 
-        cached_publisher = self._publisher_cache.get(normalized_path)
-        if cached_publisher is not None:
-            return cached_publisher
+        cached_metadata = self._metadata_cache.get(normalized_path)
+        if cached_metadata is not None:
+            return cached_metadata
 
-        publisher = self._read_company_name(exe_path) or UNKNOWN_PUBLISHER
-        self._publisher_cache[normalized_path] = publisher
-        return publisher
+        version_strings = self._read_version_strings(
+            exe_path,
+            ["CompanyName", "FileDescription", "ProductName"],
+        ) or {}
+        metadata = {
+            "company": version_strings.get("CompanyName") or UNKNOWN_PUBLISHER,
+            "description": version_strings.get("FileDescription") or "",
+            "product_name": version_strings.get("ProductName") or "",
+        }
+        self._metadata_cache[normalized_path] = metadata
+        return metadata
 
-    def _read_company_name(self, exe_path):
+    def _read_version_strings(self, exe_path, keys):
         try:
             version = ctypes.WinDLL("version", use_last_error=True)
             GetFileVersionInfoSizeW = version.GetFileVersionInfoSizeW
@@ -315,50 +386,68 @@ class ProcessManager:
             handle = wintypes.DWORD(0)
             size = GetFileVersionInfoSizeW(exe_path, ctypes.byref(handle))
             if size == 0:
-                return None
+                return {}
 
             buffer = ctypes.create_string_buffer(size)
             if not GetFileVersionInfoW(exe_path, 0, size, buffer):
-                return None
+                return {}
 
             translation_ptr = ctypes.c_void_p()
             translation_len = wintypes.UINT(0)
-            if not VerQueryValueW(
+            translations = []
+            if VerQueryValueW(
                 buffer,
                 "\\VarFileInfo\\Translation",
                 ctypes.byref(translation_ptr),
                 ctypes.byref(translation_len),
-            ):
-                return None
+            ) and translation_ptr.value and translation_len.value >= 4:
+                raw_translations = ctypes.cast(
+                    translation_ptr, ctypes.POINTER(ctypes.c_ushort)
+                )
+                translation_count = translation_len.value // 4
+                for index in range(translation_count):
+                    base = index * 2
+                    translations.append((raw_translations[base], raw_translations[base + 1]))
 
-            translation = ctypes.cast(
-                translation_ptr, ctypes.POINTER(ctypes.c_ushort)
-            )
-            language = translation[0]
-            code_page = translation[1]
-            query = f"\\StringFileInfo\\{language:04x}{code_page:04x}\\CompanyName"
+            if not translations:
+                translations.append((0x0409, 0x04B0))
 
-            value_ptr = ctypes.c_void_p()
-            value_len = wintypes.UINT(0)
-            if not VerQueryValueW(
-                buffer,
-                query,
-                ctypes.byref(value_ptr),
-                ctypes.byref(value_len),
-            ):
-                return None
+            values = {}
+            for key in keys:
+                for language, code_page in translations:
+                    query = f"\\StringFileInfo\\{language:04x}{code_page:04x}\\{key}"
+                    value_ptr = ctypes.c_void_p()
+                    value_len = wintypes.UINT(0)
+                    if not VerQueryValueW(
+                        buffer,
+                        query,
+                        ctypes.byref(value_ptr),
+                        ctypes.byref(value_len),
+                    ):
+                        continue
+                    if not value_ptr.value:
+                        continue
 
-            if not value_ptr.value:
-                return None
+                    value = ctypes.wstring_at(value_ptr.value).strip()
+                    if value:
+                        values[key] = value
+                        break
 
-            return ctypes.wstring_at(value_ptr.value).strip() or None
+            return values
         except Exception:
-            return None
+            return {}
 
     def _format_memory_usage(self, memory_mb):
         if memory_mb >= 1024:
             return f"{memory_mb / 1024:.1f} GB in use"
         return f"{memory_mb:.1f} MB in use"
+
+    def _format_memory_amount(self, memory_mb):
+        if memory_mb >= 1024:
+            return f"{memory_mb / 1024:.1f} GB"
+        if memory_mb >= 10:
+            return f"{memory_mb:.0f} MB"
+        return f"{memory_mb:.1f} MB"
 
     def _format_disk_usage(self, disk_mb_per_sec):
         if disk_mb_per_sec > 0.1:
@@ -371,6 +460,31 @@ class ProcessManager:
         if disk_mb_per_sec > 0:
             return f"{disk_mb_per_sec * 1024:.0f} KB/s"
         return "0 MB/s"
+
+    def _process_memory_bytes(self, proc, sample_time):
+        pid = proc.info["pid"]
+        cached_snapshot = self._memory_cache.get(pid)
+        if cached_snapshot and sample_time - cached_snapshot["time"] < self._memory_cache_ttl:
+            return cached_snapshot["bytes"]
+
+        memory_bytes = 0
+        try:
+            full_info = proc.memory_full_info()
+            unique_bytes = getattr(full_info, "uss", None)
+            if unique_bytes is not None and unique_bytes > 0:
+                memory_bytes = unique_bytes
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            pass
+
+        if memory_bytes <= 0:
+            memory_info = proc.info.get("memory_info")
+            memory_bytes = memory_info.rss if memory_info else 0
+
+        self._memory_cache[pid] = {
+            "time": sample_time,
+            "bytes": memory_bytes,
+        }
+        return memory_bytes
 
     def _group_key(self, name, exe_path):
         normalized_name = (name or "").strip().lower()
@@ -391,6 +505,11 @@ class ProcessManager:
         if new_publisher == UNKNOWN_PUBLISHER:
             return current_publisher
         return "Multiple"
+
+    def _merge_metadata_text(self, current_value, new_value):
+        if current_value:
+            return current_value
+        return new_value or ""
 
     def _classify_process_type(self, exe_path, publisher, has_window):
         if has_window:
@@ -415,7 +534,7 @@ class ProcessManager:
 
     def _visible_windows_by_pid(self):
         current_time = time.time()
-        if current_time - self._last_window_scan_update < 3.0:
+        if current_time - self._last_window_scan_update < self._window_scan_ttl:
             return self._cached_window_titles_by_pid
 
         user32 = ctypes.windll.user32

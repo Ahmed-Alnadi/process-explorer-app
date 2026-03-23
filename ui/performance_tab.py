@@ -36,7 +36,8 @@ class HistoryGraph(QWidget):
     def push(self, value):
         value = max(0.0, min(float(value), 100.0))
         self._values.append(value)
-        self.update()
+        if self.isVisible():
+            self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -179,9 +180,16 @@ class PerformanceTab(QWidget):
         self._last_network_snapshot = None
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
+        self._last_connections_update = 0.0
+        self._cached_connections_text = "N/A"
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
         self._cpu_name_value = self._cpu_name()
         self._hostname_value = self._hostname()
+        self._partition_count = self._read_partition_count()
+        self._active = True
+        self._resume_timer = QTimer(self)
+        self._resume_timer.setSingleShot(True)
+        self._resume_timer.timeout.connect(self._resume_refresh)
 
         root_layout = QHBoxLayout()
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -206,7 +214,7 @@ class PerformanceTab(QWidget):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_metrics)
-        self.timer.start(1500)
+        self.timer.start(2000)
 
         self.refresh_metrics()
 
@@ -373,7 +381,7 @@ class PerformanceTab(QWidget):
                 "Drive Free": system_drive["free"],
                 "Read Speed": f"{self._format_bytes(read_bytes_per_sec)}/s",
                 "Write Speed": f"{self._format_bytes(write_bytes_per_sec)}/s",
-                "Partitions": str(len(psutil.disk_partitions(all=False))),
+                "Partitions": str(self._partition_count),
             }
         )
         self.network_section.update_values(
@@ -451,6 +459,23 @@ class PerformanceTab(QWidget):
                 "Hostname": self._hostname_value,
             }
         )
+
+    def set_active(self, active):
+        self._active = active
+        if active:
+            if not self.timer.isActive() and not self._resume_timer.isActive():
+                self.timer.start(2000)
+            self.refresh_metrics()
+            return
+
+        self._resume_timer.stop()
+        self.timer.stop()
+
+    def pause_refresh_temporarily(self, duration_ms=450):
+        if not self._active:
+            return
+        self.timer.stop()
+        self._resume_timer.start(duration_ms)
 
     def _disk_metrics(self):
         counters = psutil.disk_io_counters()
@@ -560,10 +585,16 @@ class PerformanceTab(QWidget):
             return "Unknown"
 
     def _connection_count_text(self):
+        current_time = time.time()
+        if current_time - self._last_connections_update < 5.0:
+            return self._cached_connections_text
+
+        self._last_connections_update = current_time
         try:
-            return str(len(psutil.net_connections(kind="inet")))
+            self._cached_connections_text = str(len(psutil.net_connections(kind="inet")))
         except Exception:
-            return "N/A"
+            self._cached_connections_text = "N/A"
+        return self._cached_connections_text
 
     def _system_drive_usage(self):
         home_drive = (os.environ.get("SystemDrive") or "C:") + "\\"
@@ -609,3 +640,16 @@ class PerformanceTab(QWidget):
                     return f"{int(size)} {unit}"
                 return f"{size:.1f} {unit}"
             size /= 1024.0
+
+    def _resume_refresh(self):
+        if not self._active:
+            return
+        if not self.timer.isActive():
+            self.timer.start(2000)
+        self.refresh_metrics()
+
+    def _read_partition_count(self):
+        try:
+            return len(psutil.disk_partitions(all=False))
+        except Exception:
+            return 0

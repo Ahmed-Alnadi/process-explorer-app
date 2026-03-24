@@ -1,15 +1,18 @@
 import time
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QFileInfo, QObject, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QFileIconProvider,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -102,12 +105,13 @@ class DetailsTab(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setUniformRowHeights(True)
+        self.tree.setAlternatingRowColors(True)
         self.tree.setSortingEnabled(True)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setIconSize(QSize(18, 18))
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setMinimumSectionSize(72)
         self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.tree.setItemDelegateForColumn(6, SecondaryTextDelegate(self.tree))
         layout.addWidget(self.tree)
 
@@ -133,6 +137,10 @@ class DetailsTab(QWidget):
             "gpu_temp_display": "GPU Temp: N/A",
         }
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
+        self.icon_provider = QFileIconProvider()
+        self.default_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self.icon_cache = {}
+        self._tabular_font = self._build_tabular_font()
         self._column_labels = [
             "Name",
             "PID",
@@ -162,9 +170,11 @@ class DetailsTab(QWidget):
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
+        self.tree.header().sectionResized.connect(self._save_header_state)
         self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
         self._restore_sort_settings()
+        self._restore_header_state()
         self._restore_column_visibility()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
@@ -300,6 +310,10 @@ class DetailsTab(QWidget):
         self._set_item_data(item, 0, ENTRY_ROLE, entry)
         self._set_item_data(item, 0, ENTRY_ID_ROLE, entry["id"])
         self._set_item_data(item, 0, ENTRY_KIND_ROLE, "detail")
+        item.setIcon(0, self._icon_for_entry(entry))
+        for column in (1, 5, 6, 7):
+            item.setTextAlignment(column, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            item.setFont(column, self._tabular_font)
 
         self._set_item_tooltip(item, 0, entry["exe_path"] or entry["name"])
         self._set_item_tooltip(item, 4, entry["window_tooltip"])
@@ -324,6 +338,22 @@ class DetailsTab(QWidget):
             item = self.tree.topLevelItem(index)
             items[item.data(0, ENTRY_ID_ROLE)] = item
         return items
+
+    def _icon_for_entry(self, entry):
+        exe_path = entry.get("exe_path") or ""
+        cache_key = exe_path or entry["name"].lower()
+        cached_icon = self.icon_cache.get(cache_key)
+        if cached_icon is not None:
+            return cached_icon
+
+        icon = self.default_icon
+        if exe_path:
+            file_info = QFileInfo(exe_path)
+            if file_info.exists():
+                icon = self.icon_provider.icon(file_info)
+
+        self.icon_cache[cache_key] = icon
+        return icon
 
     def _set_item_text(self, item, column, value):
         if item.text(column) != value:
@@ -373,6 +403,27 @@ class DetailsTab(QWidget):
         for column in range(1, len(self._column_labels)):
             hidden = self.settings.value(f"details/column_hidden_{column}", False, type=bool)
             self.tree.setColumnHidden(column, hidden)
+
+    def _save_header_state(self, *_args):
+        self.settings.setValue("details/header_state", self.tree.header().saveState())
+
+    def _restore_header_state(self):
+        state = self.settings.value("details/header_state")
+        if state and self.tree.header().restoreState(state):
+            return
+        header = self.tree.header()
+        default_widths = {
+            0: 280,
+            1: 90,
+            2: 145,
+            3: 170,
+            4: 250,
+            5: 95,
+            6: 120,
+            7: 110,
+        }
+        for column, width in default_widths.items():
+            header.resizeSection(column, width)
 
     def _emit_page_status(self):
         visible = self._filter_details(self.latest_details)
@@ -473,6 +524,17 @@ class DetailsTab(QWidget):
         if not timestamp:
             return "--"
         return time.strftime("%I:%M:%S %p", time.localtime(timestamp)).lstrip("0")
+
+    def _build_tabular_font(self):
+        font = QFont()
+        try:
+            font.setFamilies(["Cascadia Mono SemiLight", "Cascadia Mono", "Consolas"])
+        except Exception:
+            font.setFamily("Consolas")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        font.setBold(True)
+        return font
 
     def _set_label_text(self, label, value):
         if label.text() != value:

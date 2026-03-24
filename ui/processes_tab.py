@@ -42,6 +42,10 @@ class SecondaryTextDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         primary_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
         secondary_text = index.data(SECONDARY_TEXT_ROLE) or ""
+        alignment = index.data(Qt.ItemDataRole.TextAlignmentRole)
+        if alignment is None:
+            alignment = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        align_right = bool(alignment & int(Qt.AlignmentFlag.AlignRight))
 
         item_option = QStyleOptionViewItem(option)
         self.initStyleOption(item_option, index)
@@ -73,14 +77,34 @@ class SecondaryTextDelegate(QStyledItemDelegate):
         painter.setPen(primary_color)
         painter.setFont(primary_font)
         primary_width = painter.fontMetrics().horizontalAdvance(primary_text)
+
+        if secondary_text:
+            painter.setFont(secondary_font)
+            secondary_width = painter.fontMetrics().horizontalAdvance(secondary_text)
+            total_width = primary_width + secondary_width + 10
+        else:
+            secondary_width = 0
+            total_width = primary_width
+
+        if align_right:
+            primary_rect = text_rect.adjusted(max(text_rect.width() - total_width, 0), 0, 0, 0)
+        else:
+            primary_rect = text_rect
+
+        painter.setPen(primary_color)
+        painter.setFont(primary_font)
         painter.drawText(
-            text_rect,
+            primary_rect,
             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
             primary_text,
         )
 
         if secondary_text:
-            secondary_rect = text_rect.adjusted(primary_width + 10, 0, 0, 0)
+            if align_right:
+                secondary_left = primary_rect.left() + primary_width + 10
+                secondary_rect = text_rect.adjusted(secondary_left - text_rect.left(), 0, 0, 0)
+            else:
+                secondary_rect = text_rect.adjusted(primary_width + 10, 0, 0, 0)
             painter.setPen(secondary_color)
             painter.setFont(secondary_font)
             painter.drawText(
@@ -281,9 +305,9 @@ class ProcessesTab(QWidget):
         summary_layout.addWidget(self.last_updated_label, 0, Qt.AlignmentFlag.AlignRight)
         layout.addLayout(summary_layout)
 
-        content_splitter = QSplitter(Qt.Orientation.Horizontal)
-        content_splitter.setChildrenCollapsible(False)
-        content_splitter.setHandleWidth(10)
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(10)
 
         self.tree = ClearableTreeView()
         self.tree.setObjectName("processTree")
@@ -305,15 +329,15 @@ class ProcessesTab(QWidget):
         self.tree.setItemsExpandable(True)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setUniformRowHeights(True)
+        self.tree.setAlternatingRowColors(True)
         self.tree.setSortingEnabled(True)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.setIconSize(QSize(18, 18))
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setMinimumSectionSize(72)
         self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.tree.setItemDelegateForColumn(6, SecondaryTextDelegate(self.tree))
-        content_splitter.addWidget(self.tree)
+        self.content_splitter.addWidget(self.tree)
 
         self.info_scroll = QScrollArea()
         self.info_scroll.setObjectName("sidePanelScroll")
@@ -323,14 +347,14 @@ class ProcessesTab(QWidget):
         self.info_panel = SelectionInfoPanel()
         self.info_panel.setMinimumWidth(0)
         self.info_panel.setMaximumWidth(16777215)
-        self.info_scroll.setMinimumWidth(320)
-        self.info_scroll.setMaximumWidth(420)
+        self.info_scroll.setMinimumWidth(260)
+        self.info_scroll.setMaximumWidth(16777215)
         self.info_scroll.setWidget(self.info_panel)
-        content_splitter.addWidget(self.info_scroll)
-        content_splitter.setStretchFactor(0, 4)
-        content_splitter.setStretchFactor(1, 0)
-        content_splitter.setSizes([1120, 360])
-        layout.addWidget(content_splitter)
+        self.content_splitter.addWidget(self.info_scroll)
+        self.content_splitter.setStretchFactor(0, 4)
+        self.content_splitter.setStretchFactor(1, 1)
+        self.content_splitter.setSizes([1120, 360])
+        layout.addWidget(self.content_splitter)
 
         self.end_btn = QPushButton("End Task")
         self.end_btn.setObjectName("dangerButton")
@@ -392,12 +416,16 @@ class ProcessesTab(QWidget):
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sectionPressed.connect(self._on_header_pressed)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
+        self.tree.header().sectionResized.connect(self._save_header_state)
         self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
+        self.content_splitter.splitterMoved.connect(self._save_splitter_state)
         self.info_panel.open_button.clicked.connect(self._open_selected_location)
         self.info_panel.search_button.clicked.connect(self._search_selected_entry)
         self._restore_sort_settings()
+        self._restore_header_state()
         self._restore_column_visibility()
+        self._restore_splitter_state()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
         self.info_panel.set_entry(None, self._blank_extra_details())
@@ -861,6 +889,36 @@ class ProcessesTab(QWidget):
         for column in range(1, len(self._column_labels)):
             hidden = self.settings.value(f"processes/column_hidden_{column}", False, type=bool)
             self.tree.setColumnHidden(column, hidden)
+
+    def _save_header_state(self, *_args):
+        self.settings.setValue("processes/header_state", self.tree.header().saveState())
+
+    def _restore_header_state(self):
+        state = self.settings.value("processes/header_state")
+        if state and self.tree.header().restoreState(state):
+            return
+        header = self.tree.header()
+        default_widths = {
+            0: 300,
+            1: 145,
+            2: 180,
+            3: 250,
+            4: 100,
+            5: 95,
+            6: 120,
+            7: 110,
+        }
+        for column, width in default_widths.items():
+            header.resizeSection(column, width)
+
+    def _save_splitter_state(self, *_args):
+        self.settings.setValue("processes/content_splitter_state", self.content_splitter.saveState())
+
+    def _restore_splitter_state(self):
+        state = self.settings.value("processes/content_splitter_state")
+        if state and self.content_splitter.restoreState(state):
+            return
+        self.content_splitter.setSizes([1120, 360])
 
     def _emit_page_status(self):
         if not self.current_groups:

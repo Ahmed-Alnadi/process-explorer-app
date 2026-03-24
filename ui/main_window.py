@@ -1,8 +1,8 @@
-from PySide6.QtCore import QEvent, QTimer
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QListWidget, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton
+    QListWidget, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter
 )
 from ui.details_tab import DetailsTab
 from ui.processes_tab import ProcessesTab
@@ -13,6 +13,7 @@ from ui.services_tab import ServicesTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
 
         self.setWindowTitle("Task Manager Clone")
         self.resize(1600, 880)
@@ -34,7 +35,8 @@ class MainWindow(QMainWindow):
         self.sidebar.addItem("Details")
         self.sidebar.addItem("Performance")
         self.sidebar.addItem("Services")
-        self.sidebar.setFixedWidth(144)
+        self.sidebar.setMinimumWidth(120)
+        self.sidebar.setMaximumWidth(320)
 
         # Right side
         right_layout = QVBoxLayout()
@@ -56,6 +58,7 @@ class MainWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setObjectName("searchField")
         self.search.setPlaceholderText("Type a name, publisher, or PID to search")
+        self.search.setClearButtonEnabled(True)
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(120)
@@ -91,11 +94,19 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.header_subtitle)
         content_layout.addLayout(top_controls)
         content_layout.addWidget(self.stack)
-
         right_layout.addWidget(self.content_panel)
 
-        main_layout.addWidget(self.sidebar)
-        main_layout.addLayout(right_layout)
+        right_container = QWidget()
+        right_container.setLayout(right_layout)
+
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(10)
+        self.main_splitter.addWidget(self.sidebar)
+        self.main_splitter.addWidget(right_container)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        main_layout.addWidget(self.main_splitter)
 
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.sidebar.currentRowChanged.connect(self.update_page_context)
@@ -104,12 +115,14 @@ class MainWindow(QMainWindow):
         self.header_title.installEventFilter(self)
         self.header_subtitle.installEventFilter(self)
         self.content_panel.installEventFilter(self)
+        self.main_splitter.splitterMoved.connect(self._save_main_splitter_state)
         self._connect_page_status("Processes", self.processes_tab)
         self._connect_page_status("Services", self.services_tab)
         self.status_value_label = QLabel("Ready")
         self.status_value_label.setObjectName("statusBarLabel")
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().addPermanentWidget(self.status_value_label, 1)
+        self._restore_main_splitter_state()
         self.sidebar.setCurrentRow(0)
 
     def update_page_context(self, index):
@@ -265,3 +278,14 @@ class MainWindow(QMainWindow):
             2: "Performance",
             3: "Services",
         }.get(index, "Ready")
+
+    def _save_main_splitter_state(self, *_args):
+        self.settings.setValue("main/sidebar_splitter_state", self.main_splitter.saveState())
+
+    def _restore_main_splitter_state(self):
+        state = self.settings.value("main/sidebar_splitter_state")
+        if state and self.main_splitter.restoreState(state):
+            sizes = self.main_splitter.sizes()
+            if len(sizes) == 2 and sizes[1] >= 600:
+                return
+        self.main_splitter.setSizes([144, 1400])

@@ -1,13 +1,16 @@
 import time
 
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QFileInfo, QObject, QSettings, QSize, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QFileIconProvider,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMenu,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -72,12 +75,13 @@ class ServicesTab(QWidget):
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.setUniformRowHeights(True)
+        self.tree.setAlternatingRowColors(True)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setSortingEnabled(True)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        self.tree.setIconSize(QSize(18, 18))
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tree.header().setMinimumSectionSize(72)
         layout.addWidget(self.tree)
 
         self.setLayout(layout)
@@ -85,6 +89,10 @@ class ServicesTab(QWidget):
         self.filter_text = ""
         self.latest_services = []
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
+        self.icon_provider = QFileIconProvider()
+        self.default_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+        self.icon_cache = {}
+        self._tabular_font = self._build_tabular_font()
         self._column_labels = [
             "Service",
             "Display Name",
@@ -113,9 +121,11 @@ class ServicesTab(QWidget):
 
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
+        self.tree.header().sectionResized.connect(self._save_header_state)
         self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
         self._restore_sort_settings()
+        self._restore_header_state()
         self._restore_column_visibility()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
@@ -147,6 +157,9 @@ class ServicesTab(QWidget):
             item.setText(6, entry["binpath"] or "Unavailable")
             item.setData(0, ENTRY_ROLE, entry)
             item.setData(0, ENTRY_ID_ROLE, entry["id"])
+            item.setIcon(0, self._icon_for_entry(entry))
+            item.setTextAlignment(4, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+            item.setFont(4, self._tabular_font)
             item.setToolTip(1, entry["description"] or entry["display_name"])
             item.setToolTip(6, entry["binpath"] or "Unavailable")
             for column, value in {
@@ -245,6 +258,22 @@ class ServicesTab(QWidget):
         entry = item.data(0, ENTRY_ROLE)
         return entry["id"] if entry else None
 
+    def _icon_for_entry(self, entry):
+        exe_path = entry.get("exe_path") or ""
+        cache_key = exe_path or entry["name"].lower()
+        cached_icon = self.icon_cache.get(cache_key)
+        if cached_icon is not None:
+            return cached_icon
+
+        icon = self.default_icon
+        if exe_path:
+            file_info = QFileInfo(exe_path)
+            if file_info.exists():
+                icon = self.icon_provider.icon(file_info)
+
+        self.icon_cache[cache_key] = icon
+        return icon
+
     def _restore_selection(self, entry_id):
         if entry_id is None:
             return
@@ -307,6 +336,26 @@ class ServicesTab(QWidget):
             hidden = self.settings.value(f"services/column_hidden_{column}", False, type=bool)
             self.tree.setColumnHidden(column, hidden)
 
+    def _save_header_state(self, *_args):
+        self.settings.setValue("services/header_state", self.tree.header().saveState())
+
+    def _restore_header_state(self):
+        state = self.settings.value("services/header_state")
+        if state and self.tree.header().restoreState(state):
+            return
+        header = self.tree.header()
+        default_widths = {
+            0: 170,
+            1: 280,
+            2: 120,
+            3: 130,
+            4: 90,
+            5: 160,
+            6: 340,
+        }
+        for column, width in default_widths.items():
+            header.resizeSection(column, width)
+
     def _set_label_text(self, label, value):
         if label.text() != value:
             label.setText(value)
@@ -322,6 +371,17 @@ class ServicesTab(QWidget):
         if not timestamp:
             return "--"
         return time.strftime("%I:%M:%S %p", time.localtime(timestamp)).lstrip("0")
+
+    def _build_tabular_font(self):
+        font = QFont()
+        try:
+            font.setFamilies(["Cascadia Mono SemiLight", "Cascadia Mono", "Consolas"])
+        except Exception:
+            font.setFamily("Consolas")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        font.setBold(True)
+        return font
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress:

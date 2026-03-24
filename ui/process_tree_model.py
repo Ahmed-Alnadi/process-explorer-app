@@ -1,4 +1,5 @@
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QTreeView
 
 
@@ -51,6 +52,7 @@ class ProcessTreeModel(QAbstractItemModel):
         self._node_by_id = {}
         self._sort_column = 5
         self._sort_order = Qt.SortOrder.DescendingOrder
+        self._tabular_font = self._build_tabular_font()
 
     def set_groups(self, groups, expanded_group_keys=None, load_all_children=False):
         expanded_group_keys = expanded_group_keys or set()
@@ -147,6 +149,12 @@ class ProcessTreeModel(QAbstractItemModel):
             return self._display_value(entry, node.kind, column)
         if role == Qt.ItemDataRole.DecorationRole and column == 0:
             return self._icon_resolver(entry)
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if column in (4, 5, 6, 7):
+                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if role == Qt.ItemDataRole.FontRole and column in (4, 5, 6, 7):
+            return self._tabular_font
         if role == Qt.ItemDataRole.ToolTipRole:
             return self._tooltip_value(entry, column)
         if role == roles["sort"]:
@@ -294,3 +302,14 @@ class ProcessTreeModel(QAbstractItemModel):
                 return entry["disk_mb_per_sec"]
             return entry["disk_rate_mb_per_sec"]
         return entry["name"].lower()
+
+    def _build_tabular_font(self):
+        font = QFont()
+        try:
+            font.setFamilies(["Cascadia Mono SemiLight", "Cascadia Mono", "Consolas"])
+        except Exception:
+            font.setFamily("Consolas")
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        font.setBold(True)
+        return font

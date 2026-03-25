@@ -6,7 +6,7 @@ import time
 from collections import deque
 
 import psutil
-from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtCore import QPointF, Qt, QTimer, QSettings
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame,
@@ -21,13 +21,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.subprocess_utils import hidden_subprocess_kwargs
+from core.windows_native import (
+    NativeGpuUsageMonitor,
+    native_memory_status,
+    native_network_adapters,
+    native_uptime_seconds,
+)
+from ui.export_utils import export_rows_to_csv
 
 
 class HistoryGraph(QWidget):
     def __init__(self, line_color):
         super().__init__()
-        self.setMinimumHeight(92)
+        self.setMinimumHeight(84)
+        self.setMaximumHeight(96)
         self._line_color = QColor(line_color)
         self._fill_start = QColor(line_color)
         self._fill_start.setAlpha(120)
@@ -49,6 +58,10 @@ class HistoryGraph(QWidget):
 
         rect = self.rect().adjusted(8, 8, -8, -8)
         painter.fillRect(rect, QColor(8, 18, 29, 85))
+        border_pen = QPen(QColor(160, 210, 240, 46))
+        border_pen.setWidth(1)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(rect, 8, 8)
 
         grid_pen = QPen(QColor(160, 210, 240, 24))
         grid_pen.setWidth(1)
@@ -87,6 +100,12 @@ class HistoryGraph(QWidget):
         painter.setPen(line_pen)
         painter.drawPath(line_path)
 
+        label_pen = QPen(QColor(182, 204, 220, 130))
+        painter.setPen(label_pen)
+        painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, "100%")
+        painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, "60s")
+        painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, "0")
+
 
 class MetricCard(QFrame):
     def __init__(self, title, accent_color):
@@ -114,12 +133,15 @@ class MetricCard(QFrame):
         self.progress_bar.setTextVisible(False)
 
         self.graph = HistoryGraph(accent_color)
+        self.history_label = QLabel("60-second history")
+        self.history_label.setObjectName("perfGraphCaption")
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.value_label)
         layout.addWidget(self.subtitle_label)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.graph)
+        layout.addWidget(self.history_label)
 
     def update_metric(self, value_text, progress_value, subtitle):
         bounded_value = max(0, min(int(progress_value), 100))
@@ -127,6 +149,14 @@ class MetricCard(QFrame):
         self.subtitle_label.setText(subtitle)
         self.progress_bar.setValue(bounded_value)
         self.graph.push(progress_value)
+
+    def export_rows(self):
+        return [
+            ("Metric", self.title_label.text()),
+            ("Value", self.value_label.text()),
+            ("Subtitle", self.subtitle_label.text()),
+            ("Progress", f"{self.progress_bar.value()}%"),
+        ]
 
 
 class DetailSection(QFrame):
@@ -173,6 +203,9 @@ class DetailSection(QFrame):
             if label is not None:
                 label.setText(value)
 
+    def export_rows(self):
+        return [(key, label.text()) for key, label in self._value_labels.items()]
+
 
 class PerformanceTab(QWidget):
     def __init__(self):
@@ -180,15 +213,24 @@ class PerformanceTab(QWidget):
 
         self._last_disk_snapshot = None
         self._last_network_snapshot = None
+        self._last_adapter_snapshot = {}
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
         self._last_connections_update = 0.0
         self._cached_connections_text = "N/A"
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
+        self._gpu_monitor = NativeGpuUsageMonitor()
         self._cpu_name_value = self._cpu_name()
         self._hostname_value = self._hostname()
         self._partition_count = self._read_partition_count()
+        self._last_refresh_text = "Performance updated: --"
         self._active = True
+        self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
+        self._low_overhead_mode = False
+        self._temperature_cache_ttl = 5.0
+        self._connections_cache_ttl = 5.0
+        self._timer_interval_ms = REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE]["performance_timer_ms"]
+        self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
         self._resume_timer.timeout.connect(self._resume_refresh)
@@ -200,7 +242,7 @@ class PerformanceTab(QWidget):
 
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("perfSidebar")
-        self.sidebar.addItems(["Overview", "CPU", "Memory", "Disk", "Network"])
+        self.sidebar.addItems(["Overview", "CPU", "Memory", "Disk", "Network", "GPU"])
         self.sidebar.setFixedWidth(170)
         root_layout.addWidget(self.sidebar)
 
@@ -212,11 +254,13 @@ class PerformanceTab(QWidget):
         self._build_focus_pages()
 
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
-        self.sidebar.setCurrentRow(0)
+        self.sidebar.currentRowChanged.connect(self._save_current_page)
+        self.sidebar.setCurrentRow(int(self.settings.value("performance/current_page", 0)))
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_metrics)
-        self.timer.start(2000)
+        if self._timer_interval_ms > 0:
+            self.timer.start(self._timer_interval_ms)
 
         self.refresh_metrics()
 
@@ -230,12 +274,16 @@ class PerformanceTab(QWidget):
         self.cpu_card = MetricCard("CPU Usage", "#5ec8ff")
         self.memory_card = MetricCard("Physical Memory", "#2ed3a8")
         self.disk_card = MetricCard("Disk Active Time", "#ffb84d")
+        self.network_card = MetricCard("Network Activity", "#ff6bb0")
+        self.gpu_usage_card = MetricCard("GPU Usage", "#ff8b6b")
         self.gpu_temp_card = MetricCard("GPU Temp", "#ff6b8f")
 
         metrics_layout.addWidget(self.cpu_card, 0, 0)
         metrics_layout.addWidget(self.memory_card, 0, 1)
-        metrics_layout.addWidget(self.disk_card, 1, 0)
-        metrics_layout.addWidget(self.gpu_temp_card, 1, 1)
+        metrics_layout.addWidget(self.disk_card, 0, 2)
+        metrics_layout.addWidget(self.network_card, 1, 0)
+        metrics_layout.addWidget(self.gpu_usage_card, 1, 1)
+        metrics_layout.addWidget(self.gpu_temp_card, 1, 2)
         layout.addLayout(metrics_layout)
 
         detail_layout = QGridLayout()
@@ -292,6 +340,18 @@ class PerformanceTab(QWidget):
             "Network Analysis",
             ["Download Speed", "Upload Speed", "Downloaded", "Uploaded", "Connections", "Hostname"],
         )
+        self.network_adapter_section = DetailSection("Adapters")
+        self.network_adapter_section.set_rows(["No active adapters"])
+        self.stack.widget(4).widget().layout().addWidget(self.network_adapter_section)
+        self.gpu_focus_card, self.gpu_focus_details = self._add_focus_page(
+            "GPU",
+            "#ff8b6b",
+            "GPU Analysis",
+            ["Usage", "Busiest Engine", "Adapter", "Adapters", "Temperature", "Status"],
+        )
+        self.gpu_engine_section = DetailSection("GPU Engines")
+        self.gpu_engine_section.set_rows(["No active GPU engines"])
+        self.stack.widget(5).widget().layout().addWidget(self.gpu_engine_section)
 
     def _add_focus_page(self, title, accent_color, section_title, rows):
         page, layout = self._create_scroll_page()
@@ -320,12 +380,27 @@ class PerformanceTab(QWidget):
         return scroll, layout
 
     def refresh_metrics(self):
+        self._last_refresh_text = f"Performance updated: {time.strftime('%I:%M:%S %p').lstrip('0')}"
         cpu_percent = psutil.cpu_percent(interval=None)
+        native_memory = native_memory_status()
         memory = psutil.virtual_memory()
+        if native_memory is not None:
+            total_memory = native_memory["total_phys"]
+            available_memory = native_memory["avail_phys"]
+            used_memory = native_memory["used_phys"]
+            memory_percent = native_memory["memory_load_percent"]
+            cached_memory = max(memory.cached if hasattr(memory, "cached") else available_memory, 0)
+        else:
+            total_memory = memory.total
+            available_memory = memory.available
+            used_memory = memory.used
+            memory_percent = memory.percent
+            cached_memory = getattr(memory, "cached", 0)
         swap = psutil.swap_memory()
         disk_active_percent, read_bytes_per_sec, write_bytes_per_sec = self._disk_metrics()
-        download_per_sec, upload_per_sec, total_received, total_sent = self._network_metrics()
+        adapter_metrics, download_per_sec, upload_per_sec, total_received, total_sent = self._network_metrics()
         gpu_temp_c = self._gpu_temperature()
+        gpu_metrics = self._gpu_metrics()
         cpu_freq = psutil.cpu_freq()
         physical_cores = psutil.cpu_count(logical=False) or 0
         logical_cores = psutil.cpu_count(logical=True) or 0
@@ -338,9 +413,9 @@ class PerformanceTab(QWidget):
             f"{self._frequency_text(cpu_freq)} | {logical_cores} logical / {physical_cores} physical",
         )
         self.memory_card.update_metric(
-            f"{memory.percent:.1f}%",
-            memory.percent,
-            f"{self._format_bytes(memory.used)} used of {self._format_bytes(memory.total)}",
+            f"{memory_percent:.1f}%",
+            memory_percent,
+            f"{self._format_bytes(used_memory)} used of {self._format_bytes(total_memory)}",
         )
         self.disk_card.update_metric(
             f"{disk_active_percent:.1f}%",
@@ -351,10 +426,17 @@ class PerformanceTab(QWidget):
             self.gpu_temp_card.update_metric("N/A", 0, "GPU temperature not available")
         else:
             self.gpu_temp_card.update_metric(
-                f"{gpu_temp_c:.0f} C",
+                f"{gpu_temp_c:.0f}°C",
                 min(max(gpu_temp_c, 0.0), 100.0),
                 "Temperature read from NVIDIA telemetry",
             )
+        gpu_percent = gpu_metrics["busiest_percent"] if gpu_metrics else 0.0
+        gpu_busiest_name = gpu_metrics["busiest_name"] if gpu_metrics else "GPU counters unavailable"
+        self.gpu_usage_card.update_metric(
+            f"{gpu_percent:.1f}%",
+            gpu_percent,
+            gpu_busiest_name,
+        )
 
         self.processor_section.update_values(
             {
@@ -368,10 +450,10 @@ class PerformanceTab(QWidget):
         )
         self.memory_section.update_values(
             {
-                "Total": self._format_bytes(memory.total),
-                "Available": self._format_bytes(memory.available),
-                "Used": self._format_bytes(memory.used),
-                "Cached": self._format_bytes(getattr(memory, "cached", 0)),
+                "Total": self._format_bytes(total_memory),
+                "Available": self._format_bytes(available_memory),
+                "Used": self._format_bytes(used_memory),
+                "Cached": self._format_bytes(cached_memory),
                 "Swap Used": self._format_bytes(swap.used),
                 "Swap Total": self._format_bytes(swap.total),
             }
@@ -396,6 +478,12 @@ class PerformanceTab(QWidget):
                 "Hostname": self._hostname_value,
             }
         )
+        network_progress = min(((download_per_sec + upload_per_sec) / (10 * 1024 * 1024)) * 100, 100.0)
+        self.network_card.update_metric(
+            f"{self._format_bytes(download_per_sec)}/s",
+            network_progress,
+            f"Upload {self._format_bytes(upload_per_sec)}/s",
+        )
 
         self.cpu_focus_card.update_metric(
             f"{cpu_percent:.1f}%",
@@ -414,17 +502,17 @@ class PerformanceTab(QWidget):
         )
 
         self.memory_focus_card.update_metric(
-            f"{memory.percent:.1f}%",
-            memory.percent,
+            f"{memory_percent:.1f}%",
+            memory_percent,
             "Physical memory pressure",
         )
         self.memory_focus_details.update_values(
             {
-                "Load": f"{memory.percent:.1f}%",
-                "Total": self._format_bytes(memory.total),
-                "Available": self._format_bytes(memory.available),
-                "Used": self._format_bytes(memory.used),
-                "Cached": self._format_bytes(getattr(memory, "cached", 0)),
+                "Load": f"{memory_percent:.1f}%",
+                "Total": self._format_bytes(total_memory),
+                "Available": self._format_bytes(available_memory),
+                "Used": self._format_bytes(used_memory),
+                "Cached": self._format_bytes(cached_memory),
                 "Swap Used": self._format_bytes(swap.used),
             }
         )
@@ -445,7 +533,6 @@ class PerformanceTab(QWidget):
             }
         )
 
-        network_progress = min(((download_per_sec + upload_per_sec) / (10 * 1024 * 1024)) * 100, 100.0)
         self.network_focus_card.update_metric(
             f"{self._format_bytes(download_per_sec)}/s",
             network_progress,
@@ -461,23 +548,101 @@ class PerformanceTab(QWidget):
                 "Hostname": self._hostname_value,
             }
         )
+        self._update_adapter_section(adapter_metrics)
+
+        gpu_busiest_name = gpu_metrics["busiest_name"] if gpu_metrics else "Unavailable"
+        gpu_adapter_name = ", ".join(gpu_metrics.get("adapters", [])[:2]) if gpu_metrics else "Unavailable"
+        self.gpu_focus_card.update_metric(
+            f"{gpu_percent:.1f}%",
+            gpu_percent,
+            gpu_busiest_name,
+        )
+        self.gpu_focus_details.update_values(
+            {
+                "Usage": f"{gpu_percent:.1f}%",
+                "Busiest Engine": gpu_busiest_name,
+                "Adapter": gpu_adapter_name or "Unavailable",
+                "Adapters": str(len(gpu_metrics.get("adapters", []))) if gpu_metrics else "0",
+                "Temperature": f"{gpu_temp_c:.0f}°C" if gpu_temp_c is not None else "N/A",
+                "Status": "Native GPU counters active" if gpu_metrics else "GPU counters unavailable",
+            }
+        )
+        self._update_gpu_engine_section(gpu_metrics)
 
     def set_active(self, active):
         self._active = active
         if active:
-            if not self.timer.isActive() and not self._resume_timer.isActive():
-                self.timer.start(2000)
-            self.refresh_metrics()
+            if self._timer_interval_ms > 0 and not self.timer.isActive() and not self._resume_timer.isActive():
+                self.timer.start(self._timer_interval_ms)
+            if self._refresh_profile_name != "Paused":
+                self.refresh_metrics()
             return
 
         self._resume_timer.stop()
         self.timer.stop()
+
+    def set_refresh_profile(self, profile_name):
+        config = REFRESH_PROFILES.get(profile_name, REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE])
+        self._refresh_profile_name = profile_name if profile_name in REFRESH_PROFILES else DEFAULT_REFRESH_PROFILE
+        self._timer_interval_ms = config["performance_timer_ms"]
+        self._apply_runtime_budget()
+        self._resume_timer.stop()
+        self.timer.stop()
+        if self._active and self._timer_interval_ms > 0:
+            self.timer.start(self._timer_interval_ms)
+            self.refresh_metrics()
+
+    def set_low_overhead_mode(self, enabled):
+        self._low_overhead_mode = bool(enabled)
+        self._apply_runtime_budget()
+
+    def set_compact_mode(self, enabled):
+        self.sidebar.setProperty("compactMode", bool(enabled))
+        self.sidebar.setFixedWidth(150 if enabled else 170)
+        self._repolish_widget(self.sidebar)
+
+    def refresh_now(self):
+        self.refresh_metrics()
+
+    def trigger_primary_action(self):
+        self.refresh_metrics()
+
+    def shutdown(self):
+        try:
+            self._gpu_monitor.close()
+        except Exception:
+            pass
+
+    def export_csv(self):
+        headers = ["Section", "Metric", "Value"]
+        rows = self._export_rows_for_current_page()
+        success, file_path = export_rows_to_csv(
+            self,
+            f"task-manager-performance-{time.strftime('%Y%m%d-%H%M%S')}.csv",
+            headers,
+            rows,
+        )
+        return success
+
+    def status_refresh_text(self):
+        return self._last_refresh_text
 
     def pause_refresh_temporarily(self, duration_ms=450):
         if not self._active:
             return
         self.timer.stop()
         self._resume_timer.start(duration_ms)
+
+    def pause_for_menu_open(self):
+        if not self._active:
+            return
+        self.timer.stop()
+        self._resume_timer.stop()
+
+    def resume_after_menu_close(self, delay_ms=250):
+        if not self._active:
+            return
+        self._resume_timer.start(delay_ms)
 
     def _disk_metrics(self):
         counters = psutil.disk_io_counters()
@@ -510,11 +675,48 @@ class PerformanceTab(QWidget):
         return active_percent, read_bytes_per_sec, write_bytes_per_sec
 
     def _network_metrics(self):
-        counters = psutil.net_io_counters()
+        adapters = native_network_adapters()
         now = time.time()
+        if adapters:
+            adapter_metrics = []
+            total_received = 0
+            total_sent = 0
+            total_download = 0.0
+            total_upload = 0.0
+            for adapter in adapters:
+                key = adapter["index"]
+                previous = self._last_adapter_snapshot.get(key)
+                interval = max(now - previous["time"], 0.001) if previous else 1.0
+                rx_per_sec = 0.0
+                tx_per_sec = 0.0
+                if previous is not None:
+                    rx_per_sec = max(adapter["rx_bytes"] - previous["rx_bytes"], 0) / interval
+                    tx_per_sec = max(adapter["tx_bytes"] - previous["tx_bytes"], 0) / interval
+                adapter_metrics.append(
+                    {
+                        **adapter,
+                        "download_per_sec": rx_per_sec,
+                        "upload_per_sec": tx_per_sec,
+                    }
+                )
+                total_received += adapter["rx_bytes"]
+                total_sent += adapter["tx_bytes"]
+                total_download += rx_per_sec
+                total_upload += tx_per_sec
+            self._last_adapter_snapshot = {
+                adapter["index"]: {
+                    "time": now,
+                    "rx_bytes": adapter["rx_bytes"],
+                    "tx_bytes": adapter["tx_bytes"],
+                }
+                for adapter in adapters
+            }
+            return adapter_metrics, total_download, total_upload, total_received, total_sent
+
+        counters = psutil.net_io_counters()
         if counters is None:
             self._last_network_snapshot = None
-            return 0.0, 0.0, 0.0, 0.0
+            return [], 0.0, 0.0, 0.0, 0.0
 
         snapshot = {
             "time": now,
@@ -523,22 +725,25 @@ class PerformanceTab(QWidget):
         }
         if self._last_network_snapshot is None:
             self._last_network_snapshot = snapshot
-            return 0.0, 0.0, counters.bytes_recv, counters.bytes_sent
+            return [], 0.0, 0.0, counters.bytes_recv, counters.bytes_sent
 
         interval = max(now - self._last_network_snapshot["time"], 0.001)
         download_per_sec = max(snapshot["bytes_recv"] - self._last_network_snapshot["bytes_recv"], 0) / interval
         upload_per_sec = max(snapshot["bytes_sent"] - self._last_network_snapshot["bytes_sent"], 0) / interval
         self._last_network_snapshot = snapshot
-        return download_per_sec, upload_per_sec, counters.bytes_recv, counters.bytes_sent
+        return [], download_per_sec, upload_per_sec, counters.bytes_recv, counters.bytes_sent
 
     def _gpu_temperature(self):
         current_time = time.time()
-        if current_time - self._last_temperature_update < 5.0:
+        if current_time - self._last_temperature_update < self._temperature_cache_ttl:
             return self._cached_gpu_temp_c
 
         self._last_temperature_update = current_time
         self._cached_gpu_temp_c = self._read_nvidia_gpu_temperature()
         return self._cached_gpu_temp_c
+
+    def _gpu_metrics(self):
+        return self._gpu_monitor.read()
 
     def _read_nvidia_gpu_temperature(self):
         if not self._nvidia_smi_path:
@@ -594,7 +799,7 @@ class PerformanceTab(QWidget):
 
     def _connection_count_text(self):
         current_time = time.time()
-        if current_time - self._last_connections_update < 5.0:
+        if current_time - self._last_connections_update < self._connections_cache_ttl:
             return self._cached_connections_text
 
         self._last_connections_update = current_time
@@ -603,6 +808,23 @@ class PerformanceTab(QWidget):
         except Exception:
             self._cached_connections_text = "N/A"
         return self._cached_connections_text
+
+    def _apply_runtime_budget(self):
+        config = REFRESH_PROFILES.get(
+            self._refresh_profile_name,
+            REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE],
+        )
+        multiplier = 1.8 if self._low_overhead_mode else 1.0
+        self._temperature_cache_ttl = max(config["performance_timer_ms"] / 1000.0 * 2.5, 5.0) * multiplier
+        self._connections_cache_ttl = max(config["performance_timer_ms"] / 1000.0 * 2.5, 5.0) * multiplier
+
+    def _save_current_page(self, index):
+        self.settings.setValue("performance/current_page", int(index))
+
+    def _repolish_widget(self, widget):
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
 
     def _system_drive_usage(self):
         home_drive = (os.environ.get("SystemDrive") or "C:") + "\\"
@@ -621,7 +843,9 @@ class PerformanceTab(QWidget):
             }
 
     def _uptime_text(self):
-        uptime_seconds = max(time.time() - psutil.boot_time(), 0)
+        uptime_seconds = native_uptime_seconds()
+        if uptime_seconds is None:
+            uptime_seconds = max(time.time() - psutil.boot_time(), 0)
         days = int(uptime_seconds // 86400)
         hours = int((uptime_seconds % 86400) // 3600)
         minutes = int((uptime_seconds % 3600) // 60)
@@ -652,8 +876,10 @@ class PerformanceTab(QWidget):
     def _resume_refresh(self):
         if not self._active:
             return
+        if self._timer_interval_ms <= 0:
+            return
         if not self.timer.isActive():
-            self.timer.start(2000)
+            self.timer.start(self._timer_interval_ms)
         self.refresh_metrics()
 
     def _read_partition_count(self):
@@ -661,3 +887,81 @@ class PerformanceTab(QWidget):
             return len(psutil.disk_partitions(all=False))
         except Exception:
             return 0
+
+    def _update_adapter_section(self, adapters):
+        if not adapters:
+            self.network_adapter_section.set_rows(["No active adapters"])
+            self.network_adapter_section.update_values({"No active adapters": "Native adapter counters unavailable"})
+            return
+
+        rows = [adapter["alias"] for adapter in adapters[:6]]
+        self.network_adapter_section.set_rows(rows)
+        values = {}
+        for adapter in adapters[:6]:
+            link_speed = max(adapter.get("rx_link_speed", 0), adapter.get("tx_link_speed", 0))
+            link_text = self._format_bits(link_speed) if link_speed else "Unknown link"
+            values[adapter["alias"]] = (
+                f"Down {self._format_bytes(adapter['download_per_sec'])}/s | "
+                f"Up {self._format_bytes(adapter['upload_per_sec'])}/s | "
+                f"{link_text}"
+            )
+        self.network_adapter_section.update_values(values)
+
+    def _update_gpu_engine_section(self, gpu_metrics):
+        engines = list((gpu_metrics or {}).get("engines", []))
+        if not engines:
+            self.gpu_engine_section.set_rows(["No active GPU engines"])
+            self.gpu_engine_section.update_values({"No active GPU engines": "Native GPU counters unavailable"})
+            return
+
+        rows = [engine["name"] for engine in engines]
+        self.gpu_engine_section.set_rows(rows)
+        self.gpu_engine_section.update_values(
+            {engine["name"]: f"{engine['percent']:.1f}%" for engine in engines}
+        )
+
+    def _format_bits(self, bits_per_sec):
+        units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"]
+        value = float(bits_per_sec)
+        for unit in units:
+            if value < 1000 or unit == units[-1]:
+                if unit == "bps":
+                    return f"{int(value)} {unit}"
+                return f"{value:.1f} {unit}"
+            value /= 1000.0
+
+    def _export_rows_for_current_page(self):
+        page_index = self.sidebar.currentRow()
+        rows = []
+        if page_index == 0:
+            rows.extend(self._section_export_rows("Overview CPU", self.cpu_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview Memory", self.memory_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview Disk", self.disk_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview Network", self.network_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview GPU Usage", self.gpu_usage_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview GPU Temp", self.gpu_temp_card.export_rows()))
+            rows.extend(self._section_export_rows("Processor", self.processor_section.export_rows()))
+            rows.extend(self._section_export_rows("Memory", self.memory_section.export_rows()))
+            rows.extend(self._section_export_rows("Storage", self.storage_section.export_rows()))
+            rows.extend(self._section_export_rows("Network", self.network_section.export_rows()))
+            return rows
+
+        focus_pages = {
+            1: ("CPU", self.cpu_focus_card, self.cpu_focus_details, None),
+            2: ("Memory", self.memory_focus_card, self.memory_focus_details, None),
+            3: ("Disk", self.disk_focus_card, self.disk_focus_details, None),
+            4: ("Network", self.network_focus_card, self.network_focus_details, self.network_adapter_section),
+            5: ("GPU", self.gpu_focus_card, self.gpu_focus_details, self.gpu_engine_section),
+        }
+        page_name, card, section, extra_section = focus_pages.get(
+            page_index,
+            ("Overview", self.cpu_card, self.processor_section, None),
+        )
+        rows.extend(self._section_export_rows(page_name, card.export_rows()))
+        rows.extend(self._section_export_rows(f"{page_name} Details", section.export_rows()))
+        if extra_section is not None:
+            rows.extend(self._section_export_rows(f"{page_name} Extra", extra_section.export_rows()))
+        return rows
+
+    def _section_export_rows(self, section_name, items):
+        return [[section_name, label, value] for label, value in items]

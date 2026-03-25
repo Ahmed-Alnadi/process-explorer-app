@@ -1,15 +1,10 @@
 import ctypes
 import sys
-from pathlib import Path
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
+from core.theme_manager import resource_path
 from ui.main_window import MainWindow
-
-
-def resource_path(relative_path: str) -> Path:
-    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return base_path / relative_path
 
 
 def set_app_user_model_id():

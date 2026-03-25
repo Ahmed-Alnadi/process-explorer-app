@@ -2,6 +2,8 @@ from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QTreeView
 
+from ui.heatmap_utils import disk_intensity_from_rate, protected_heat_brush, resource_heat_brush
+
 
 class ProcessNode:
     def __init__(self, entry=None, kind="root", parent=None):
@@ -56,40 +58,49 @@ class ProcessTreeModel(QAbstractItemModel):
 
     def set_groups(self, groups, expanded_group_keys=None, load_all_children=False):
         expanded_group_keys = expanded_group_keys or set()
-
-        self.beginResetModel()
-        self._root.children = []
-        self._node_by_id = {}
+        self._sync_nodes(
+            parent_node=self._root,
+            incoming_entries=groups,
+            parent_index=QModelIndex(),
+            kind="group",
+        )
 
         for group in groups:
-            group_node = ProcessNode(group, "group", self._root)
-            self._node_by_id[group["id"]] = group_node
-            should_load_children = load_all_children or group["group_key"] in expanded_group_keys
-            if should_load_children:
-                self._populate_group_children(group_node)
-            self._root.children.append(group_node)
+            group_node = self._node_by_id.get(group["id"])
+            if group_node is None:
+                continue
 
-        self._sort_children(self._root)
-        self.endResetModel()
+            should_load_children = (
+                load_all_children
+                or group["group_key"] in expanded_group_keys
+                or group_node.children_loaded
+            )
+            if not should_load_children:
+                continue
+
+            group_node.children_loaded = True
+            self._sync_nodes(
+                parent_node=group_node,
+                incoming_entries=self._sorted_entries(group["children"]),
+                parent_index=self.index_for_entry_id(group["id"]),
+                kind="child",
+            )
+
+        self.sort(self._sort_column, self._sort_order)
 
     def ensure_group_children_loaded(self, group_id):
         group_node = self._node_by_id.get(group_id)
         if group_node is None or group_node.kind != "group" or group_node.children_loaded:
             return
 
-        children = self._sorted_entries(group_node.entry["children"])
-        if not children:
-            group_node.children_loaded = True
-            return
-
         parent_index = self.index_for_entry_id(group_id)
-        self.beginInsertRows(parent_index, 0, len(children) - 1)
-        for child in children:
-            child_node = ProcessNode(child, "child", group_node)
-            group_node.children.append(child_node)
-            self._node_by_id[child["id"]] = child_node
         group_node.children_loaded = True
-        self.endInsertRows()
+        self._sync_nodes(
+            parent_node=group_node,
+            incoming_entries=self._sorted_entries(group_node.entry["children"]),
+            parent_index=parent_index,
+            kind="child",
+        )
 
     def index_for_entry_id(self, entry_id, column=0):
         node = self._node_by_id.get(entry_id)
@@ -149,6 +160,8 @@ class ProcessTreeModel(QAbstractItemModel):
             return self._display_value(entry, node.kind, column)
         if role == Qt.ItemDataRole.DecorationRole and column == 0:
             return self._icon_resolver(entry)
+        if role == Qt.ItemDataRole.BackgroundRole:
+            return self._background_brush(entry, node.kind, column)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if column in (4, 5, 6, 7):
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -197,13 +210,55 @@ class ProcessTreeModel(QAbstractItemModel):
             return index.internalPointer()
         return self._root
 
-    def _populate_group_children(self, group_node):
-        group_node.children = []
-        for child in self._sorted_entries(group_node.entry["children"]):
-            child_node = ProcessNode(child, "child", group_node)
-            group_node.children.append(child_node)
-            self._node_by_id[child["id"]] = child_node
-        group_node.children_loaded = True
+    def _sync_nodes(self, parent_node, incoming_entries, parent_index, kind):
+        incoming_entries = list(incoming_entries)
+        incoming_by_id = {entry["id"]: entry for entry in incoming_entries}
+
+        for row in range(len(parent_node.children) - 1, -1, -1):
+            child_node = parent_node.children[row]
+            if child_node.entry["id"] in incoming_by_id:
+                continue
+            self.beginRemoveRows(parent_index, row, row)
+            removed_node = parent_node.children.pop(row)
+            self._remove_node_mapping(removed_node)
+            self.endRemoveRows()
+
+        existing_ids = {child.entry["id"] for child in parent_node.children}
+        for row, child_node in enumerate(list(parent_node.children)):
+            updated_entry = incoming_by_id.get(child_node.entry["id"])
+            if updated_entry is None:
+                continue
+            if child_node.entry != updated_entry:
+                child_node.entry = updated_entry
+                self.dataChanged.emit(
+                    self.index(row, 0, parent_index),
+                    self.index(row, len(self._headers) - 1, parent_index),
+                )
+
+        new_entries = [entry for entry in incoming_entries if entry["id"] not in existing_ids]
+        if new_entries:
+            start_row = len(parent_node.children)
+            end_row = start_row + len(new_entries) - 1
+            self.beginInsertRows(parent_index, start_row, end_row)
+            for entry in new_entries:
+                child_node = ProcessNode(entry, kind, parent_node)
+                parent_node.children.append(child_node)
+                self._node_by_id[entry["id"]] = child_node
+            self.endInsertRows()
+
+        desired_order = [entry["id"] for entry in incoming_entries]
+        current_order = [child.entry["id"] for child in parent_node.children]
+        if desired_order != current_order:
+            self.layoutAboutToBeChanged.emit()
+            order_lookup = {entry_id: index for index, entry_id in enumerate(desired_order)}
+            parent_node.children.sort(key=lambda node: order_lookup.get(node.entry["id"], 10**9))
+            self.layoutChanged.emit()
+
+    def _remove_node_mapping(self, node):
+        for child in list(node.children):
+            self._remove_node_mapping(child)
+        self._node_by_id.pop(node.entry["id"], None)
+        node.children = []
 
     def _sorted_entries(self, entries):
         reverse = self._sort_order == Qt.SortOrder.DescendingOrder
@@ -226,9 +281,12 @@ class ProcessTreeModel(QAbstractItemModel):
     def _display_value(self, entry, kind, column):
         if kind == "group":
             if column == 0:
+                base_name = entry["name"]
                 if entry["process_count"] > 1:
-                    return f"{entry['name']} ({entry['process_count']})"
-                return entry["name"]
+                    base_name = f"{base_name} ({entry['process_count']})"
+                if entry["is_protected"]:
+                    return f"{base_name} [Protected]"
+                return base_name
             if column == 1:
                 return entry["type_display"]
             if column == 2:
@@ -246,6 +304,8 @@ class ProcessTreeModel(QAbstractItemModel):
             return ""
 
         if column == 0:
+            if entry["is_protected"]:
+                return f"{entry['name']} [Protected]"
             return entry["name"]
         if column == 1:
             return entry["type_display"]
@@ -273,6 +333,8 @@ class ProcessTreeModel(QAbstractItemModel):
                     parts.append("Protected process: cannot be ended from this app.")
             if entry["exe_path"]:
                 parts.append(entry["exe_path"])
+            elif entry.get("location_reason"):
+                parts.append(entry["location_reason"])
             return "\n".join(parts)
         if column == 3:
             return entry["window_tooltip"]
@@ -313,3 +375,15 @@ class ProcessTreeModel(QAbstractItemModel):
         font.setFixedPitch(True)
         font.setBold(True)
         return font
+
+    def _background_brush(self, entry, kind, column):
+        if column == 0 and entry.get("is_protected"):
+            return protected_heat_brush()
+        if column == 5:
+            return resource_heat_brush(entry["cpu_percent"] / 100.0)
+        if column == 6:
+            return resource_heat_brush(entry["memory_percent"] / 100.0)
+        if column == 7:
+            disk_value = entry["disk_mb_per_sec"] if kind == "group" else entry["disk_rate_mb_per_sec"]
+            return resource_heat_brush(disk_intensity_from_rate(disk_value))
+        return None

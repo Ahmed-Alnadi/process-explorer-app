@@ -78,12 +78,11 @@ class ProcessManager:
 
         window_titles_by_pid = self._visible_windows_by_pid()
         service_snapshot = self._service_links.snapshot()
-        startup_entries = self._startup_entries()
         process_entries, active_pids = self._collect_process_entries(
             interval,
             window_titles_by_pid,
             service_snapshot,
-            startup_entries,
+            None,
         )
         grouped_processes = {}
 
@@ -115,7 +114,7 @@ class ProcessManager:
                     "service_display_names": [],
                     "primary_service_name": "",
                     "primary_service_display_name": "",
-                    "startup_display": "Not listed",
+                    "startup_display": "",
                     "search_query": "",
                     "children": [],
                 }
@@ -156,10 +155,6 @@ class ProcessManager:
             if not group["primary_service_name"] and child.get("primary_service_name"):
                 group["primary_service_name"] = child["primary_service_name"]
                 group["primary_service_display_name"] = child["primary_service_display_name"]
-            group["startup_display"] = self._merge_startup_display(
-                group["startup_display"],
-                child.get("startup_display") or "Not listed",
-            )
             group["children"].append(child)
 
         self._prune_pid_caches(active_pids)
@@ -201,12 +196,11 @@ class ProcessManager:
 
         window_titles_by_pid = self._visible_windows_by_pid()
         service_snapshot = self._service_links.snapshot()
-        startup_entries = self._startup_entries()
         process_entries, active_pids = self._collect_process_entries(
             interval,
             window_titles_by_pid,
             service_snapshot,
-            startup_entries,
+            None,
         )
 
         self._prune_pid_caches(active_pids)
@@ -234,6 +228,29 @@ class ProcessManager:
             "gpu_temp_c": gpu_temp_c,
             "gpu_temp_display": self._format_temperature_display("GPU Temp", gpu_temp_c),
         }
+
+    def startup_display_for_entry(self, entry):
+        if not entry:
+            return "Not listed"
+
+        if "children" in entry:
+            startup_display = "Not listed"
+            for child in entry.get("children", []):
+                startup_display = self._merge_startup_display(
+                    startup_display,
+                    self.startup_display_for_entry(child),
+                )
+            return startup_display
+
+        startup_match = self._startup_match_for_path(
+            entry.get("exe_path", ""),
+            self._startup_entries(),
+        )
+        if not startup_match:
+            return "Not listed"
+        return (
+            f"Enabled ({startup_impact_label(entry.get('cpu_percent', 0.0), entry.get('memory_mb', 0.0), entry.get('disk_rate_mb_per_sec', 0.0))})"
+        )
 
     def is_protected_process(self, name, **kwargs):
         return self._process_protection_result(name, **kwargs)["is_protected"]
@@ -407,13 +424,6 @@ class ProcessManager:
                 disk_io = proc.info.get("io_counters")
                 process_disk_bytes = self._sample_process_disk_bytes(pid, disk_io)
                 process_disk_mb_per_sec = process_disk_bytes / (1024 * 1024) / interval
-                startup_match = self._startup_match_for_path(identity["exe_path"], startup_entries)
-                startup_display = "Not listed"
-                if startup_match:
-                    startup_display = (
-                        f"Enabled ({startup_impact_label(cpu_percent, memory_mb, process_disk_mb_per_sec)})"
-                    )
-
                 entry = {
                     "id": f"pid:{pid}",
                     "group_key": self._group_key(raw_name, exe_path),
@@ -453,7 +463,7 @@ class ProcessManager:
                     "primary_service_name": service_names[0] if service_names else "",
                     "primary_service_display_name": service_display_names[0] if service_display_names else "",
                     "service_display": self._format_service_display(service_display_names, service_names),
-                    "startup_display": startup_display,
+                    "startup_display": "",
                     "search_query": "",
                     "is_protected": False,
                     "protection_reason": "",

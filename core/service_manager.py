@@ -53,8 +53,6 @@ class ServiceManager:
 
             exe_path = self._resolve_service_exe_path(binpath, pid)
             metadata = metadata_for_exe(exe_path)
-            dependents = self.dependent_services(name)
-            dependency_depth = self.dependent_service_depth(name)
             services.append(
                 {
                     "id": f"service:{name.lower()}",
@@ -71,8 +69,8 @@ class ServiceManager:
                     "can_open_location": bool(exe_path),
                     "location_reason": self._service_location_reason(binpath, exe_path),
                     "description": description,
-                    "dependent_count": len(dependents),
-                    "dependent_depth": dependency_depth,
+                    "dependent_count": None,
+                    "dependent_depth": None,
                     "linked_process_display": f"{pid}" if pid else "None",
                     "is_protected": self.is_protected_service(
                         name,

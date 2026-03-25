@@ -165,6 +165,7 @@ class DetailSection(QFrame):
         super().__init__()
         self.setObjectName("detailSection")
         self._value_labels = {}
+        self._row_order = []
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
@@ -181,12 +182,16 @@ class DetailSection(QFrame):
         layout.addLayout(self.rows_layout)
 
     def set_rows(self, rows):
+        rows = list(rows)
+        if rows == self._row_order:
+            return
         while self.rows_layout.count():
             item = self.rows_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         self._value_labels.clear()
+        self._row_order = rows
 
         for row_index, label_text in enumerate(rows):
             label = QLabel(label_text)

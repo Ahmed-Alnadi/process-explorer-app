@@ -695,13 +695,14 @@ class DetailsTab(QWidget):
         self.go_to_service_requested.emit(entry["primary_service_name"])
 
     def _copy_entry_details(self, entry):
+        extra = self._entry_additional_details(entry)
         lines = [
             f"Name: {entry['name']}",
             f"PID: {entry['pid']}",
             f"Type: {entry['type_display']}",
             f"Protection: {entry.get('protection_reason') or ('Protected' if entry.get('is_protected') else 'Normal')}",
             f"Service: {entry.get('service_display') or 'None'}",
-            f"Startup: {entry.get('startup_display') or 'Not listed'}",
+            f"Startup: {extra.get('startup_display') or entry.get('startup_display') or 'Not listed'}",
             f"Publisher: {entry['publisher']}",
             f"Path: {entry.get('exe_path') or entry.get('location_reason') or 'Unavailable'}",
             f"Window: {entry['window_display']}",
@@ -749,6 +750,8 @@ class DetailsTab(QWidget):
         except Exception:
             extra["threads"] = "Unavailable"
 
+        extra["startup_display"] = self.process_manager.startup_display_for_entry(entry)
+
         self.entry_detail_cache[entry["id"]] = {"time": time.time(), "data": dict(extra)}
         return extra
 
@@ -757,6 +760,7 @@ class DetailsTab(QWidget):
             "user": "--",
             "started": "--",
             "threads": "--",
+            "startup_display": "Not listed",
         }
 
     def focus_pid(self, pid):

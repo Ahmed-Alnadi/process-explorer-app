@@ -101,6 +101,19 @@ class ProcessTreeModel(QAbstractItemModel):
             kind="child",
         )
 
+    def unload_group_children(self, group_id):
+        group_node = self._node_by_id.get(group_id)
+        if group_node is None or group_node.kind != "group" or not group_node.children_loaded:
+            return
+        if group_node.children:
+            parent_index = self.index_for_entry_id(group_id)
+            self.beginRemoveRows(parent_index, 0, len(group_node.children) - 1)
+            for child in list(group_node.children):
+                self._remove_node_mapping(child)
+            group_node.children = []
+            self.endRemoveRows()
+        group_node.children_loaded = False
+
     def index_for_entry_id(self, entry_id, column=0):
         node = self._node_by_id.get(entry_id)
         return self.index_for_node(node, column)

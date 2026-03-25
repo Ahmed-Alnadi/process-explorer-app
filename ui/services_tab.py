@@ -106,7 +106,7 @@ class ServiceInfoPanel(QFrame):
         layout.addLayout(actions)
         layout.addStretch()
 
-    def set_entry(self, entry, dependent_text="--"):
+    def set_entry(self, entry, dependent_text="--", dependency_depth=None):
         self.current_entry = entry
         if entry is None:
             self.title_label.setText("Selection")
@@ -143,7 +143,7 @@ class ServiceInfoPanel(QFrame):
             "Path": entry.get("exe_path") or entry.get("binpath") or entry.get("location_reason") or "Unavailable",
             "Description": entry.get("description") or "Unknown",
             "Dependents": dependent_text,
-            "Dependency Depth": str(entry.get("dependent_depth", 0)),
+            "Dependency Depth": str(entry.get("dependent_depth", 0) if dependency_depth is None else dependency_depth),
             "Protection": "Protected from stop/restart" if entry.get("is_protected") else "Normal",
         }
         for field, value in values.items():
@@ -430,7 +430,8 @@ class ServicesTab(QWidget):
         if entry is None:
             self.info_panel.set_entry(None, "--")
             return
-        self.info_panel.set_entry(entry, self._dependent_summary_text(entry))
+        dependency_info = self._dependent_info(entry)
+        self.info_panel.set_entry(entry, dependency_info["summary"], dependency_info["depth"])
 
     def set_filter_text(self, text):
         self.filter_text = text.strip().lower()
@@ -780,7 +781,8 @@ class ServicesTab(QWidget):
             self.status_label.setText(f"Could not start {entry['display_name']}: {error}")
 
     def _stop_service(self, entry):
-        dependents = self._dependent_services(entry)
+        dependency_info = self._dependent_info(entry)
+        dependents = dependency_info["dependents"]
         if dependents:
             dependent_names = ", ".join(item["display_name"] for item in dependents[:6])
             if len(dependents) > 6:
@@ -790,7 +792,7 @@ class ServicesTab(QWidget):
                 "Stop Service",
                 (
                     f"{entry['display_name']} has {len(dependents)} dependent services"
-                    f" across {entry.get('dependent_depth', 0)} level(s).\n\n"
+                    f" across {dependency_info['depth']} level(s).\n\n"
                     f"Dependents: {dependent_names}\n\n"
                     "Stop this service anyway?"
                 ),
@@ -811,7 +813,8 @@ class ServicesTab(QWidget):
             self.status_label.setText(f"Could not stop {entry['display_name']}: {error}")
 
     def _restart_service(self, entry):
-        dependents = self._dependent_services(entry)
+        dependency_info = self._dependent_info(entry)
+        dependents = dependency_info["dependents"]
         if dependents:
             dependent_names = ", ".join(item["display_name"] for item in dependents[:6])
             if len(dependents) > 6:
@@ -821,7 +824,7 @@ class ServicesTab(QWidget):
                 "Restart Service",
                 (
                     f"{entry['display_name']} has {len(dependents)} dependent services"
-                    f" across {entry.get('dependent_depth', 0)} level(s).\n\n"
+                    f" across {dependency_info['depth']} level(s).\n\n"
                     f"Dependents: {dependent_names}\n\n"
                     "Restart this service anyway?"
                 ),
@@ -1034,16 +1037,26 @@ class ServicesTab(QWidget):
         return None
 
     def _dependent_services(self, entry):
+        return self._dependent_info(entry)["dependents"]
+
+    def _dependent_info(self, entry):
         cache_key = (entry.get("name") or "").lower()
         cached = self.dependency_cache.get(cache_key)
         if cached is not None:
             return cached
         dependents = self.service_manager.dependent_services(entry.get("name"))
-        self.dependency_cache[cache_key] = dependents
-        return dependents
+        info = {
+            "dependents": dependents,
+            "depth": self.service_manager.dependent_service_depth(entry.get("name")),
+            "summary": self._format_dependent_summary(dependents),
+        }
+        self.dependency_cache[cache_key] = info
+        return info
 
     def _dependent_summary_text(self, entry):
-        dependents = self._dependent_services(entry)
+        return self._dependent_info(entry)["summary"]
+
+    def _format_dependent_summary(self, dependents):
         if not dependents:
             return "No dependent services"
         display_names = ", ".join(item["display_name"] for item in dependents[:4])

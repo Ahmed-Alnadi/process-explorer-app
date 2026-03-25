@@ -380,7 +380,7 @@ class SelectionInfoPanel(QFrame):
             "Type": entry["type_display"],
             "Protection": entry.get("protection_reason") or ("Protected" if entry.get("is_protected") else "Normal"),
             "Service": entry.get("service_display") or "None",
-            "Startup": entry.get("startup_display") or "Not listed",
+            "Startup": extra_details.get("startup_display") or entry.get("startup_display") or "Not listed",
             "Publisher": entry["publisher"],
             "Path": entry["exe_path"] or entry.get("location_reason") or "Unavailable",
             "Window": entry["window_display"],
@@ -1204,6 +1204,9 @@ class ProcessesTab(QWidget):
 
     def _on_tree_collapsed(self, _index):
         self.pause_refresh_temporarily(900)
+        group = _index.data(ENTRY_ROLE)
+        if group and _index.data(ENTRY_KIND_ROLE) == "group":
+            self.model.unload_group_children(group["id"])
 
     def _on_tree_pressed(self, index):
         if not index.isValid():
@@ -1431,6 +1434,8 @@ class ProcessesTab(QWidget):
         except Exception:
             extra["threads"] = "Unavailable"
 
+        extra["startup_display"] = self.process_manager.startup_display_for_entry(entry)
+
         self.entry_detail_cache[entry["id"]] = {"time": time.time(), "data": dict(extra)}
         return extra
 
@@ -1439,6 +1444,7 @@ class ProcessesTab(QWidget):
             "user": "--",
             "started": "--",
             "threads": "--",
+            "startup_display": "Not listed",
         }
 
     def _open_selected_location(self):
@@ -1472,7 +1478,7 @@ class ProcessesTab(QWidget):
             f"Type: {entry['type_display']}",
             f"Protection: {entry.get('protection_reason') or ('Protected' if entry.get('is_protected') else 'Normal')}",
             f"Service: {entry.get('service_display') or 'None'}",
-            f"Startup: {entry.get('startup_display') or 'Not listed'}",
+            f"Startup: {extra.get('startup_display') or entry.get('startup_display') or 'Not listed'}",
             f"Publisher: {entry['publisher']}",
             f"Path: {entry.get('exe_path') or entry.get('location_reason') or 'Unavailable'}",
             f"Window: {entry['window_display']}",

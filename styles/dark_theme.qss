@@ -26,7 +26,7 @@ QWidget {
     padding: 10px 12px;
     margin: 3px 0;
     border-radius: 12px;
-    color: #aebfce;
+    color: #e7f0f7;
 }
 
 #navSidebar[compactMode="true"]::item {
@@ -63,7 +63,7 @@ QWidget {
 }
 
 #headerSubtitle {
-    color: #90a7bb;
+    color: #c7d7e4;
     font-size: 13px;
     margin-bottom: 4px;
     background: transparent;
@@ -79,6 +79,10 @@ QWidget {
 
 #searchField:focus {
     border: 1px solid rgba(87, 195, 255, 0.78);
+}
+
+#searchField[echoMode="0"] {
+    color: #f2f8fd;
 }
 
 #pageStack {
@@ -146,6 +150,11 @@ QSplitter::handle:hover {
     border-radius: 18px;
 }
 
+#sidePanel[protectedState="true"] {
+    border: 1px solid rgba(232, 113, 132, 0.58);
+    background-color: rgba(30, 19, 28, 0.94);
+}
+
 #sidePanelScroll,
 #sidePanelScroll > QWidget {
     background: transparent;
@@ -158,19 +167,31 @@ QSplitter::handle:hover {
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
 
+#protectedBadge {
+    background: rgba(210, 84, 103, 0.22);
+    color: #ffdce4;
+    border: 1px solid rgba(231, 110, 130, 0.52);
+    border-radius: 10px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    letter-spacing: 1px;
+}
+
 #sidePanelSubtitle {
-    color: #8fa6b8;
+    color: #d5e2ec;
     font-size: 12px;
 }
 
 #sideKey {
-    color: #88a0b3;
+    color: #d6e2eb;
     font-size: 12px;
 }
 
 #sideValue {
     color: #eef5fb;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    padding-top: 1px;
 }
 
 #perfScroll,
@@ -190,7 +211,7 @@ QSplitter::handle:hover {
     padding: 10px 12px;
     margin: 4px 0;
     border-radius: 10px;
-    color: #aebfce;
+    color: #e5eef6;
 }
 
 #perfSidebar[compactMode="true"]::item {
@@ -218,9 +239,18 @@ QSplitter::handle:hover {
 
 #perfCard,
 #detailSection {
-    background-color: rgba(10, 22, 34, 0.84);
-    border: 1px solid rgba(149, 218, 255, 0.14);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(11, 24, 37, 0.96),
+        stop: 1 rgba(17, 36, 52, 0.94)
+    );
+    border: 1px solid rgba(149, 218, 255, 0.24);
     border-radius: 20px;
+}
+
+#perfCard:hover,
+#detailSection:hover {
+    border: 1px solid rgba(149, 218, 255, 0.34);
 }
 
 #perfCardTitle,
@@ -238,12 +268,12 @@ QSplitter::handle:hover {
 }
 
 #perfCardSubtitle {
-    color: #92a8ba;
+    color: #e0ebf3;
     font-size: 12px;
 }
 
 #perfGraphCaption {
-    color: #6fa4c6;
+    color: #d7e7f3;
     font-size: 11px;
     padding-top: 2px;
 }
@@ -265,18 +295,19 @@ QSplitter::handle:hover {
 }
 
 #detailKey {
-    color: #89a1b4;
+    color: #d8e6ef;
     font-size: 12px;
 }
 
 #detailValue {
     color: #eef5fb;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    padding-top: 1px;
 }
 
 QHeaderView::section {
     background-color: rgba(19, 40, 56, 0.96);
-    color: #d9e8f3;
+    color: #f0f7fc;
     border: none;
     border-right: 1px solid rgba(149, 218, 255, 0.08);
     padding: 11px 9px;
@@ -300,7 +331,7 @@ QMenu::item {
     padding: 9px 18px 9px 12px;
     margin: 2px 0;
     border-radius: 8px;
-    color: #dce9f3;
+    color: #eef6fc;
 }
 
 QMenu::item:selected {
@@ -437,13 +468,13 @@ QMenu::separator {
 }
 
 #statusLabel {
-    color: #9cb2c4;
+    color: #e7f0f7;
     padding-left: 2px;
     font-size: 13px;
 }
 
 QLabel {
-    color: #d2deea;
+    color: #e5eef6;
     background: transparent;
 }
 
@@ -453,8 +484,18 @@ QStatusBar {
 }
 
 #statusBarLabel {
-    color: #b5c9d9;
+    color: #e2edf6;
     padding: 3px 6px;
+}
+
+QScrollArea#perfScroll {
+    border: 1px solid rgba(149, 218, 255, 0.10);
+    border-radius: 18px;
+    background-color: rgba(9, 18, 29, 0.18);
+}
+
+QScrollArea#perfScroll > QWidget > QWidget#perfRoot {
+    background: transparent;
 }
 
 #adminStatusBadge {

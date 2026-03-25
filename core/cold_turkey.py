@@ -4,6 +4,8 @@ import os
 PROTECTED_PROCESS_NAMES = {
     "servicehub.power",
     "servicehub.power.exe",
+    "servicehub.helper",
+    "servicehub.helper.exe",
 }
 
 PROTECTED_SERVICE_NAMES = {
@@ -33,6 +35,8 @@ def process_seed_match(*, raw_name="", exe_path="", publisher="", command_line="
         return True, "Protected by process name."
     normalized_exe = normalized_path(exe_path)
     if normalized_exe.endswith("\\servicehub.power") or normalized_exe.endswith("\\servicehub.power.exe"):
+        return True, "Protected by executable path."
+    if normalized_exe.endswith("\\servicehub.helper") or normalized_exe.endswith("\\servicehub.helper.exe"):
         return True, "Protected by executable path."
 
     return False, ""

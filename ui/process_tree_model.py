@@ -58,14 +58,15 @@ class ProcessTreeModel(QAbstractItemModel):
 
     def set_groups(self, groups, expanded_group_keys=None, load_all_children=False):
         expanded_group_keys = expanded_group_keys or set()
+        ordered_groups = self._sorted_entries(groups, "group")
         self._sync_nodes(
             parent_node=self._root,
-            incoming_entries=groups,
+            incoming_entries=ordered_groups,
             parent_index=QModelIndex(),
             kind="group",
         )
 
-        for group in groups:
+        for group in ordered_groups:
             group_node = self._node_by_id.get(group["id"])
             if group_node is None:
                 continue
@@ -81,12 +82,10 @@ class ProcessTreeModel(QAbstractItemModel):
             group_node.children_loaded = True
             self._sync_nodes(
                 parent_node=group_node,
-                incoming_entries=self._sorted_entries(group["children"]),
+                incoming_entries=self._sorted_entries(group["children"], "child"),
                 parent_index=self.index_for_entry_id(group["id"]),
                 kind="child",
             )
-
-        self.sort(self._sort_column, self._sort_order)
 
     def ensure_group_children_loaded(self, group_id):
         group_node = self._node_by_id.get(group_id)
@@ -97,7 +96,7 @@ class ProcessTreeModel(QAbstractItemModel):
         group_node.children_loaded = True
         self._sync_nodes(
             parent_node=group_node,
-            incoming_entries=self._sorted_entries(group_node.entry["children"]),
+            incoming_entries=self._sorted_entries(group_node.entry["children"], "child"),
             parent_index=parent_index,
             kind="child",
         )
@@ -260,11 +259,11 @@ class ProcessTreeModel(QAbstractItemModel):
         self._node_by_id.pop(node.entry["id"], None)
         node.children = []
 
-    def _sorted_entries(self, entries):
+    def _sorted_entries(self, entries, kind):
         reverse = self._sort_order == Qt.SortOrder.DescendingOrder
         return sorted(
             entries,
-            key=lambda entry: self._sort_value(entry, "child", self._sort_column),
+            key=lambda entry: self._sort_value(entry, kind, self._sort_column),
             reverse=reverse,
         )
 

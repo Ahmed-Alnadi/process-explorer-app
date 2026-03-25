@@ -8,6 +8,8 @@ IF_MAX_PHYS_ADDRESS_LENGTH = 32
 IF_OPER_STATUS_UP = 1
 PDH_FMT_DOUBLE = 0x00000200
 PDH_MORE_DATA = 0x800007D2
+PROCESS_QUERY_INFORMATION = 0x0400
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 SC_MANAGER_CONNECT = 0x0001
 SERVICE_ENUMERATE_DEPENDENTS = 0x0008
 SERVICE_STATE_ALL = 0x00000003
@@ -143,6 +145,22 @@ class PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
     ]
 
 
+class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("PageFaultCount", wintypes.DWORD),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+        ("PrivateUsage", ctypes.c_size_t),
+    ]
+
+
 def native_memory_status():
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -167,6 +185,46 @@ def native_uptime_seconds():
         return float(kernel32.GetTickCount64() / 1000.0)
     except Exception:
         return None
+
+
+def native_process_private_bytes(pid):
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    except Exception:
+        return None
+
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX),
+        wintypes.DWORD,
+    ]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+    process_handle = None
+    try:
+        access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION
+        process_handle = kernel32.OpenProcess(access, False, int(pid))
+        if not process_handle:
+            return None
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS_EX)
+        if not psapi.GetProcessMemoryInfo(
+            process_handle,
+            ctypes.byref(counters),
+            counters.cb,
+        ):
+            return None
+        return int(counters.PrivateUsage)
+    except Exception:
+        return None
+    finally:
+        if process_handle:
+            kernel32.CloseHandle(process_handle)
 
 
 def native_network_adapters():
@@ -361,6 +419,85 @@ class NativeGpuUsageMonitor:
                 "engines": engines[:6],
                 "adapters": native_display_adapters(),
             }
+        except Exception:
+            return None
+
+
+class NativeDiskActivityMonitor:
+    def __init__(self):
+        self._pdh = None
+        self._query = wintypes.HANDLE()
+        self._counter = wintypes.HANDLE()
+        self._ready = False
+        self._initialize()
+
+    def _initialize(self):
+        try:
+            self._pdh = ctypes.WinDLL("pdh", use_last_error=True)
+        except Exception:
+            return
+
+        self._pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+        self._pdh.PdhOpenQueryW.restype = wintypes.DWORD
+        self._pdh.PdhAddEnglishCounterW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self._pdh.PdhAddEnglishCounterW.restype = wintypes.DWORD
+        self._pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCollectQueryData.restype = wintypes.DWORD
+        self._pdh.PdhGetFormattedCounterValue.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(PDH_FMT_COUNTERVALUE),
+        ]
+        self._pdh.PdhGetFormattedCounterValue.restype = wintypes.DWORD
+        self._pdh.PdhCloseQuery.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCloseQuery.restype = wintypes.DWORD
+
+        if self._pdh.PdhOpenQueryW(None, None, ctypes.byref(self._query)) != 0:
+            return
+
+        path = "\\PhysicalDisk(_Total)\\% Idle Time"
+        if self._pdh.PdhAddEnglishCounterW(self._query, path, None, ctypes.byref(self._counter)) != 0:
+            self._pdh.PdhCloseQuery(self._query)
+            self._query = wintypes.HANDLE()
+            return
+
+        self._pdh.PdhCollectQueryData(self._query)
+        self._ready = True
+
+    def close(self):
+        if self._pdh is not None and self._query:
+            try:
+                self._pdh.PdhCloseQuery(self._query)
+            except Exception:
+                pass
+        self._ready = False
+
+    def read_active_percent(self):
+        if not self._ready:
+            return None
+
+        try:
+            status = self._pdh.PdhCollectQueryData(self._query)
+            if status != 0:
+                return None
+            counter_type = wintypes.DWORD(0)
+            value = PDH_FMT_COUNTERVALUE()
+            status = self._pdh.PdhGetFormattedCounterValue(
+                self._counter,
+                PDH_FMT_DOUBLE,
+                ctypes.byref(counter_type),
+                ctypes.byref(value),
+            )
+            if status != 0:
+                return None
+            idle_percent = max(0.0, min(float(value.unionValue.doubleValue), 100.0))
+            return max(0.0, 100.0 - idle_percent)
         except Exception:
             return None
 

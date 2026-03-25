@@ -6,7 +6,7 @@ import psutil
 from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, Qt, QTimer
 from PySide6.QtGui import QActionGroup, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter, QSplitterHandle, QMenu
 )
 from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
@@ -30,20 +30,21 @@ class MainWindow(QMainWindow):
         )
         self._low_overhead_mode = self.settings.value("main/low_overhead_mode", False, type=bool)
         self._compact_mode = self.settings.value("main/compact_mode", False, type=bool)
+        self._runtime_paused = False
         if self._refresh_profile_name not in REFRESH_PROFILES:
             self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
 
         self._apply_window_title()
-        self.resize(1600, 880)
-        self.setMinimumSize(1450, 820)
+        self.resize(1720, 940)
+        self.setMinimumSize(1540, 860)
 
         main_widget = QWidget()
         main_widget.setObjectName("windowRoot")
         self.setCentralWidget(main_widget)
 
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(18, 18, 18, 18)
-        main_layout.setSpacing(18)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
         main_widget.setLayout(main_layout)
 
         # Sidebar
@@ -58,13 +59,13 @@ class MainWindow(QMainWindow):
 
         # Right side
         right_layout = QVBoxLayout()
-        right_layout.setSpacing(14)
+        right_layout.setSpacing(8)
 
         self.content_panel = QFrame()
         self.content_panel.setObjectName("contentPanel")
         content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(20, 20, 20, 20)
-        content_layout.setSpacing(14)
+        content_layout.setContentsMargins(14, 14, 14, 14)
+        content_layout.setSpacing(10)
         self.content_panel.setLayout(content_layout)
 
         self.header_title = QLabel("Control Center")
@@ -203,6 +204,9 @@ class MainWindow(QMainWindow):
         self.footer_timer = QTimer(self)
         self.footer_timer.timeout.connect(self._update_footer_metrics)
         self.footer_timer.start(1000)
+        QApplication.instance().applicationStateChanged.connect(
+            lambda *_: QTimer.singleShot(0, self._update_runtime_pause_state)
+        )
         self._restore_window_geometry()
         self._restore_main_splitter_state()
         self._apply_refresh_profile(self._refresh_profile_name)
@@ -211,6 +215,7 @@ class MainWindow(QMainWindow):
         self.services_tab.refresh_now()
         self.sidebar.setCurrentRow(int(self.settings.value("main/current_page", 0)))
         self._update_footer_metrics()
+        self._update_runtime_pause_state()
 
     def update_page_context(self, index):
         if index == 1:
@@ -275,6 +280,16 @@ class MainWindow(QMainWindow):
         self.performance_tab.shutdown()
         self.services_tab.shutdown()
         super().closeEvent(event)
+
+    def event(self, event):
+        if event.type() in (
+            QEvent.Type.WindowStateChange,
+            QEvent.Type.ActivationChange,
+            QEvent.Type.Show,
+            QEvent.Type.Hide,
+        ):
+            QTimer.singleShot(0, self._update_runtime_pause_state)
+        return super().event(event)
 
     def moveEvent(self, event):
         self._pause_live_updates()
@@ -355,6 +370,19 @@ class MainWindow(QMainWindow):
             if callable(pause_refresh):
                 pause_refresh(duration_ms)
 
+    def _update_runtime_pause_state(self):
+        paused = bool(self.isMinimized() or not self.isVisible())
+        if paused == self._runtime_paused:
+            return
+        self._runtime_paused = paused
+        widgets = [self.processes_tab, self.performance_tab, self.services_tab]
+        if self.details_tab is not None:
+            widgets.append(self.details_tab)
+        for widget in widgets:
+            set_runtime_paused = getattr(widget, "set_runtime_paused", None)
+            if callable(set_runtime_paused):
+                set_runtime_paused(paused)
+
     def _ensure_details_tab(self):
         if self.details_tab is not None:
             return
@@ -417,7 +445,7 @@ class MainWindow(QMainWindow):
             sizes = self.main_splitter.sizes()
             if len(sizes) == 2 and sizes[1] >= 600:
                 return
-        self.main_splitter.setSizes([144, 1400])
+        self.main_splitter.setSizes([136, 1560])
 
     def _save_window_geometry(self):
         self.settings.setValue("main/window_geometry", self.saveGeometry())

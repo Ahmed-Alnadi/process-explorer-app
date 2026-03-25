@@ -1,6 +1,7 @@
 import ctypes
 import os
 import re
+import time
 from ctypes import wintypes
 
 try:
@@ -10,6 +11,15 @@ except ImportError:  # pragma: no cover - Windows-only module
 
 
 UNKNOWN_PUBLISHER = "Unknown"
+APPROVAL_BASE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved"
+APPROVAL_ENABLED = 0x02
+APPROVAL_DISABLED = 0x03
+APPROVAL_ENABLED_DELAYED = 0x06
+
+
+def _filetime_now_bytes():
+    filetime = int((time.time() + 11644473600) * 10000000)
+    return filetime.to_bytes(8, "little", signed=False)
 
 
 class StartupManager:
@@ -40,13 +50,31 @@ class StartupManager:
             return []
 
         run_keys = [
-            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "Current User Run"),
-            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "Machine Run"),
-            (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "Machine Run (32-bit)"),
+            (
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                "Current User Run",
+                "HKCU",
+                "Run",
+            ),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                "Machine Run",
+                "HKLM",
+                "Run",
+            ),
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+                "Machine Run (32-bit)",
+                "HKLM",
+                "Run32",
+            ),
         ]
 
         entries = []
-        for hive, key_path, location in run_keys:
+        for hive, key_path, location, hive_name, approval_section in run_keys:
             try:
                 with winreg.OpenKey(hive, key_path) as key:
                     index = 0
@@ -55,16 +83,23 @@ class StartupManager:
                         command = str(value).strip()
                         target_path = self._extract_target_path(command)
                         metadata = self._metadata_for_path(target_path)
+                        status, enabled = self._approval_status(hive_name, approval_section, name)
                         entries.append(
                             {
                                 "id": f"startup:registry:{location}:{name.lower()}",
                                 "name": name,
-                                "status": "Enabled",
+                                "status": status,
+                                "enabled": enabled,
                                 "publisher": metadata["company"],
                                 "location": location,
                                 "command": command or "Unavailable",
                                 "target_path": target_path,
                                 "description": metadata["description"],
+                                "source_type": "registry",
+                                "approval_hive": hive_name,
+                                "approval_section": approval_section,
+                                "approval_name": name,
+                                "supports_toggle": True,
                             }
                         )
                         index += 1
@@ -76,11 +111,19 @@ class StartupManager:
     def _folder_startup_entries(self):
         entries = []
         folders = [
-            (os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup"), "User Startup Folder"),
-            (os.path.join(os.environ.get("PROGRAMDATA", ""), r"Microsoft\Windows\Start Menu\Programs\StartUp"), "Common Startup Folder"),
+            (
+                os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup"),
+                "User Startup Folder",
+                "HKCU",
+            ),
+            (
+                os.path.join(os.environ.get("PROGRAMDATA", ""), r"Microsoft\Windows\Start Menu\Programs\StartUp"),
+                "Common Startup Folder",
+                "HKLM",
+            ),
         ]
 
-        for folder, location in folders:
+        for folder, location, hive_name in folders:
             if not folder or not os.path.isdir(folder):
                 continue
 
@@ -90,20 +133,92 @@ class StartupManager:
                     continue
 
                 metadata = self._metadata_for_path(path)
+                status, enabled = self._approval_status(hive_name, "StartupFolder", name)
                 entries.append(
                     {
                         "id": f"startup:folder:{location}:{name.lower()}",
                         "name": os.path.splitext(name)[0],
-                        "status": "Enabled",
+                        "status": status,
+                        "enabled": enabled,
                         "publisher": metadata["company"],
                         "location": location,
                         "command": path,
                         "target_path": path,
                         "description": metadata["description"],
+                        "source_type": "folder",
+                        "approval_hive": hive_name,
+                        "approval_section": "StartupFolder",
+                        "approval_name": name,
+                        "supports_toggle": True,
                     }
                 )
 
         return entries
+
+    def set_entry_enabled(self, entry, enabled):
+        if winreg is None:
+            return False, "Startup management is only available on Windows."
+        if not entry or not entry.get("supports_toggle"):
+            return False, "This startup entry cannot be changed."
+
+        hive_name = entry.get("approval_hive")
+        section = entry.get("approval_section")
+        value_name = entry.get("approval_name")
+        if not hive_name or not section or not value_name:
+            return False, "Windows did not expose a writable startup control for this item."
+
+        try:
+            self._write_approval_value(hive_name, section, value_name, bool(enabled))
+        except PermissionError:
+            return False, "Administrator rights are required to change this startup entry."
+        except OSError as error:
+            return False, f"Windows rejected the startup change: {error}"
+
+        return True, ""
+
+    def _approval_status(self, hive_name, section, value_name):
+        raw = self._approval_value(hive_name, section, value_name)
+        if not raw:
+            return "Enabled", True
+
+        state = raw[0]
+        if state == APPROVAL_DISABLED:
+            return "Disabled", False
+        if state == APPROVAL_ENABLED_DELAYED:
+            return "Enabled", True
+        return "Enabled", True
+
+    def _approval_value(self, hive_name, section, value_name):
+        hive = self._hive_from_name(hive_name)
+        if hive is None or winreg is None:
+            return None
+        key_path = f"{APPROVAL_BASE_KEY}\\{section}"
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                value, _ = winreg.QueryValueEx(key, value_name)
+                return bytes(value) if isinstance(value, (bytes, bytearray)) else None
+        except OSError:
+            return None
+
+    def _write_approval_value(self, hive_name, section, value_name, enabled):
+        hive = self._hive_from_name(hive_name)
+        if hive is None or winreg is None:
+            raise OSError("Unsupported startup approval hive.")
+
+        key_path = f"{APPROVAL_BASE_KEY}\\{section}"
+        access = getattr(winreg, "KEY_SET_VALUE", 0) | getattr(winreg, "KEY_QUERY_VALUE", 0)
+        with winreg.CreateKeyEx(hive, key_path, 0, access) as key:
+            state = APPROVAL_ENABLED if enabled else APPROVAL_DISABLED
+            data = bytes([state, 0, 0, 0]) + _filetime_now_bytes()
+            winreg.SetValueEx(key, value_name, 0, winreg.REG_BINARY, data)
+
+    def _hive_from_name(self, hive_name):
+        if winreg is None:
+            return None
+        return {
+            "HKCU": winreg.HKEY_CURRENT_USER,
+            "HKLM": winreg.HKEY_LOCAL_MACHINE,
+        }.get((hive_name or "").upper())
 
     def _extract_target_path(self, command):
         normalized = os.path.expandvars((command or "").strip())

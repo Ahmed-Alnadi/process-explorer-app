@@ -18,6 +18,11 @@ from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.service_links import ServiceLinkResolver
 from core.startup_manager import StartupManager
 from core.subprocess_utils import hidden_subprocess_kwargs
+from core.windows_native import (
+    NativeDiskActivityMonitor,
+    native_memory_status,
+    native_process_private_bytes,
+)
 
 
 class ProcessTerminationBlockedError(RuntimeError):
@@ -33,6 +38,7 @@ class ProcessManager:
         self._last_disk_active_time_update = 0.0
         self._cpu_count = max(psutil.cpu_count() or 1, 1)
         self._memory_total = max(psutil.virtual_memory().total, 1)
+        self._native_memory_total = 0
         self._memory_cache = {}
         self._identity_cache = {}
         self._service_links = ServiceLinkResolver()
@@ -45,6 +51,7 @@ class ProcessManager:
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
+        self._disk_monitor = NativeDiskActivityMonitor()
         self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
         self._low_overhead_mode = False
         self._memory_cache_ttl = 3.5
@@ -210,13 +217,18 @@ class ProcessManager:
     def system_summary(self):
         cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
+        native_memory = native_memory_status()
+        memory_percent = native_memory["memory_load_percent"] if native_memory else memory.percent
+        if native_memory and native_memory.get("total_phys"):
+            self._native_memory_total = int(native_memory["total_phys"])
+            self._memory_total = max(self._native_memory_total, 1)
         disk_active_time_percent = self._disk_active_time_percent()
         gpu_temp_c = self._gpu_temperature()
         return {
             "cpu_percent": cpu_percent,
             "cpu_display": f"CPU: {cpu_percent:.1f}%",
-            "memory_percent": memory.percent,
-            "memory_display": f"Physical Memory: {memory.percent:.1f}%",
+            "memory_percent": memory_percent,
+            "memory_display": f"Physical Memory: {memory_percent:.1f}%",
             "disk_active_time_percent": disk_active_time_percent,
             "disk_active_time_display": f"Disk Active Time: {disk_active_time_percent:.1f}%",
             "gpu_temp_c": gpu_temp_c,
@@ -571,6 +583,10 @@ class ProcessManager:
         return self._last_disk_active_time_percent
 
     def _read_disk_active_time_percent(self):
+        native_value = self._disk_monitor.read_active_percent()
+        if native_value is not None:
+            return native_value
+
         command = (
             "Get-Counter '\\PhysicalDisk(_Total)\\% Idle Time' -ErrorAction SilentlyContinue | "
             "Select-Object -ExpandProperty CounterSamples | "
@@ -696,6 +712,9 @@ class ProcessManager:
                 memory_bytes = unique_bytes
         except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
             pass
+
+        if memory_bytes <= 0:
+            memory_bytes = native_process_private_bytes(pid) or 0
 
         if memory_bytes <= 0:
             memory_info = proc.info.get("memory_info")

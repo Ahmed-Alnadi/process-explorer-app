@@ -117,6 +117,10 @@ class DetailsTab(QWidget):
         summary_layout.addWidget(self.last_updated_label, 0, Qt.AlignmentFlag.AlignRight)
         layout.addLayout(summary_layout)
 
+        self.vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.vertical_splitter.setChildrenCollapsible(False)
+        self.vertical_splitter.setHandleWidth(10)
+
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.content_splitter.setChildrenCollapsible(False)
         self.content_splitter.setHandleWidth(10)
@@ -144,29 +148,40 @@ class DetailsTab(QWidget):
         self.info_scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         self.info_panel = SelectionInfoPanel()
-        self.info_scroll.setMinimumWidth(280)
+        self.info_scroll.setMinimumWidth(320)
         self.info_scroll.setMaximumWidth(16777215)
         self.info_scroll.setWidget(self.info_panel)
         self.content_splitter.addWidget(self.info_scroll)
-        self.content_splitter.setStretchFactor(0, 4)
-        self.content_splitter.setStretchFactor(1, 1)
-        self.content_splitter.setSizes([1100, 360])
-        layout.addWidget(self.content_splitter)
+        self.content_splitter.setStretchFactor(0, 5)
+        self.content_splitter.setStretchFactor(1, 2)
+        self.content_splitter.setSizes([1260, 430])
+        self.vertical_splitter.addWidget(self.content_splitter)
 
+        bottom_panel = QWidget()
+        bottom_layout = QVBoxLayout()
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(8)
+        bottom_panel.setLayout(bottom_layout)
         self.end_btn = QPushButton("End Task")
         self.end_btn.setObjectName("dangerButton")
         self.end_btn.setToolTip("Terminate the selected process.")
         self.end_btn.clicked.connect(self.end_task)
-        layout.addWidget(self.end_btn)
+        bottom_layout.addWidget(self.end_btn)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("statusLabel")
-        layout.addWidget(self.status_label)
+        bottom_layout.addWidget(self.status_label)
 
         self.notice_label = QLabel("")
         self.notice_label.setObjectName("statusLabel")
         self.notice_label.setWordWrap(True)
-        layout.addWidget(self.notice_label)
+        bottom_layout.addWidget(self.notice_label)
+
+        self.vertical_splitter.addWidget(bottom_panel)
+        self.vertical_splitter.setStretchFactor(0, 7)
+        self.vertical_splitter.setStretchFactor(1, 1)
+        self.vertical_splitter.setSizes([760, 108])
+        layout.addWidget(self.vertical_splitter)
 
         self.setLayout(layout)
 
@@ -184,6 +199,11 @@ class DetailsTab(QWidget):
         self.icon_provider = QFileIconProvider()
         self.default_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         self.icon_cache = {}
+        self._visible_entry_ids = set()
+        self._visible_entries_cache = []
+        self._runtime_paused = False
+        self.entry_detail_cache = {}
+        self.entry_detail_cache_ttl = 8.0
         self.entry_history = {}
         self._column_labels = [
             "Name",
@@ -204,6 +224,9 @@ class DetailsTab(QWidget):
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
         self._resume_timer.timeout.connect(self._resume_refresh)
+        self._icon_refresh_timer = QTimer(self)
+        self._icon_refresh_timer.setSingleShot(True)
+        self._icon_refresh_timer.timeout.connect(self._refresh_visible_icons)
 
         self.model = FlatEntryTableModel(
             headers=self._column_labels,
@@ -261,14 +284,21 @@ class DetailsTab(QWidget):
         self.tree.header().sectionPressed.connect(self._on_header_pressed)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
         self.tree.header().sectionResized.connect(self._save_header_state)
+        self.tree.header().sectionMoved.connect(self._save_header_state)
         self.tree.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._show_column_chooser)
+        self.content_splitter.splitterMoved.connect(self._save_splitter_state)
+        self.vertical_splitter.splitterMoved.connect(self._save_vertical_splitter_state)
+        self.tree.verticalScrollBar().valueChanged.connect(self._schedule_visible_row_refresh)
+        self.tree.horizontalScrollBar().valueChanged.connect(self._schedule_visible_row_refresh)
         self.info_panel.open_button.clicked.connect(self._open_selected_location)
         self.info_panel.search_button.clicked.connect(self._search_selected_entry)
         self.info_panel.service_button.pressed.connect(self._go_to_selected_service)
         self._restore_sort_settings()
         self._restore_header_state()
         self._restore_column_visibility()
+        self._restore_splitter_state()
+        self._restore_vertical_splitter_state()
         self._install_clear_filters(self)
         QApplication.instance().aboutToQuit.connect(self.shutdown)
         self.info_panel.set_entry(None, self._blank_extra_details(), None)
@@ -287,10 +317,16 @@ class DetailsTab(QWidget):
         selected_entry_id = self._selected_entry_id()
         vertical_scroll = self.tree.verticalScrollBar().value()
         horizontal_scroll = self.tree.horizontalScrollBar().value()
+        self._visible_entries_cache = []
 
         self.tree.setUpdatesEnabled(False)
         try:
-            self.model.sync_entries(self.latest_details)
+            priority_ids = self._priority_entry_ids()
+            self.model.sync_entries(
+                self.latest_details,
+                priority_ids=priority_ids,
+                batch_size=max(len(priority_ids) + 24, 96),
+            )
             self.proxy_model.set_filter_text(self.filter_text)
             self._restore_selection(selected_entry_id)
         finally:
@@ -300,8 +336,10 @@ class DetailsTab(QWidget):
         self.tree.horizontalScrollBar().setValue(horizontal_scroll)
         self.on_select()
         visible_details = self._visible_entries()
+        self._visible_entries_cache = visible_details
         self._update_notice_state(visible_details)
         self._emit_page_status(visible_details)
+        self._schedule_visible_row_refresh()
 
     def on_select(self):
         entry = self._selected_entry()
@@ -373,16 +411,21 @@ class DetailsTab(QWidget):
     def set_active(self, active):
         self._active = active
         if active:
-            if self._timer_interval_ms > 0 and not self.timer.isActive() and not self._resume_timer.isActive():
+            if (
+                not self._runtime_paused
+                and self._timer_interval_ms > 0
+                and not self.timer.isActive()
+                and not self._resume_timer.isActive()
+            ):
                 self.timer.start(self._timer_interval_ms)
-            if self._refresh_profile_name != "Paused":
+            if not self._runtime_paused and self._refresh_profile_name != "Paused":
                 self.request_refresh.emit()
             return
         self._resume_timer.stop()
         self.timer.stop()
 
     def pause_refresh_temporarily(self, duration_ms=450):
-        if not self._active:
+        if not self._active or self._runtime_paused:
             return
         self.timer.stop()
         self._resume_timer.start(duration_ms)
@@ -394,16 +437,29 @@ class DetailsTab(QWidget):
         self._resume_timer.stop()
 
     def resume_after_menu_close(self, delay_ms=250):
-        if not self._active:
+        if not self._active or self._runtime_paused:
             return
         self._resume_timer.start(delay_ms)
 
     def shutdown(self):
+        self._icon_refresh_timer.stop()
         self._resume_timer.stop()
         self.timer.stop()
         if self.refresh_thread.isRunning():
             self.refresh_thread.quit()
             self.refresh_thread.wait(1000)
+
+    def set_runtime_paused(self, paused):
+        paused = bool(paused)
+        if paused == self._runtime_paused:
+            return
+        self._runtime_paused = paused
+        self._resume_timer.stop()
+        self.timer.stop()
+        if not paused and self._active and self._timer_interval_ms > 0:
+            self.timer.start(self._timer_interval_ms)
+            if self._refresh_profile_name != "Paused":
+                self.request_refresh.emit()
 
     def set_refresh_profile(self, profile_name):
         config = REFRESH_PROFILES.get(profile_name, REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE])
@@ -416,7 +472,7 @@ class DetailsTab(QWidget):
         self.process_manager.set_refresh_profile(self._refresh_profile_name)
         self._resume_timer.stop()
         self.timer.stop()
-        if self._active and self._timer_interval_ms > 0:
+        if self._active and not self._runtime_paused and self._timer_interval_ms > 0:
             self.timer.start(self._timer_interval_ms)
             self.request_refresh.emit()
 
@@ -434,6 +490,8 @@ class DetailsTab(QWidget):
         self._repolish_widget(self.tree.header())
 
     def refresh_now(self):
+        if self._runtime_paused:
+            return
         self.request_force_refresh.emit()
 
     def trigger_primary_action(self):
@@ -558,6 +616,24 @@ class DetailsTab(QWidget):
     def _save_header_state(self, *_args):
         self.settings.setValue("details/header_state", self.tree.header().saveState())
 
+    def _save_splitter_state(self, *_args):
+        self.settings.setValue("details/content_splitter_state", self.content_splitter.saveState())
+
+    def _restore_splitter_state(self):
+        state = self.settings.value("details/content_splitter_state")
+        if state and self.content_splitter.restoreState(state):
+            return
+        self.content_splitter.setSizes([1260, 430])
+
+    def _save_vertical_splitter_state(self, *_args):
+        self.settings.setValue("details/vertical_splitter_state", self.vertical_splitter.saveState())
+
+    def _restore_vertical_splitter_state(self):
+        state = self.settings.value("details/vertical_splitter_state")
+        if state and self.vertical_splitter.restoreState(state):
+            return
+        self.vertical_splitter.setSizes([760, 108])
+
     def _restore_header_state(self):
         state = self.settings.value("details/header_state")
         if state and self.tree.header().restoreState(state):
@@ -648,6 +724,9 @@ class DetailsTab(QWidget):
             self.status_label.setText(f"Copied PID for {entry['name']}.")
 
     def _entry_additional_details(self, entry):
+        cached = self.entry_detail_cache.get(entry["id"])
+        if cached is not None and time.time() - cached["time"] < self.entry_detail_cache_ttl:
+            return dict(cached["data"])
         extra = self._blank_extra_details()
         try:
             process = psutil.Process(entry["pid"])
@@ -670,12 +749,7 @@ class DetailsTab(QWidget):
         except Exception:
             extra["threads"] = "Unavailable"
 
-        try:
-            command = " ".join(process.cmdline()).strip()
-            extra["command"] = command or "Unavailable"
-        except Exception:
-            extra["command"] = "Unavailable"
-
+        self.entry_detail_cache[entry["id"]] = {"time": time.time(), "data": dict(extra)}
         return extra
 
     def _blank_extra_details(self):
@@ -683,7 +757,6 @@ class DetailsTab(QWidget):
             "user": "--",
             "started": "--",
             "threads": "--",
-            "command": "--",
         }
 
     def focus_pid(self, pid):
@@ -741,6 +814,8 @@ class DetailsTab(QWidget):
         return headers, rows
 
     def _visible_entries(self):
+        if self.proxy_model.rowCount() == len(self._visible_entries_cache):
+            return list(self._visible_entries_cache)
         entries = []
         for row in range(self.proxy_model.rowCount()):
             index = self.proxy_model.index(row, 0)
@@ -908,10 +983,13 @@ class DetailsTab(QWidget):
 
     def _icon_for_entry(self, entry):
         exe_path = entry.get("exe_path") or ""
-        cache_key = exe_path or entry["name"].lower()
+        cache_key = self._icon_cache_key(entry)
         cached_icon = self.icon_cache.get(cache_key)
         if cached_icon is not None:
             return cached_icon
+
+        if entry["id"] not in self._visible_entry_ids:
+            return self.default_icon
 
         icon = self.default_icon
         if exe_path:
@@ -922,10 +1000,64 @@ class DetailsTab(QWidget):
         self.icon_cache[cache_key] = icon
         return icon
 
+    def _icon_cache_key(self, entry):
+        return entry.get("exe_path") or entry["name"].lower()
+
     def _repolish_widget(self, widget):
         widget.style().unpolish(widget)
         widget.style().polish(widget)
         widget.update()
+
+    def _priority_entry_ids(self):
+        priority_ids = set(self._compute_visible_entry_ids())
+        selected_id = self._selected_entry_id()
+        if selected_id:
+            priority_ids.add(selected_id)
+        if self._pending_focus_pid is not None:
+            for entry in self.latest_details:
+                if entry.get("pid") == self._pending_focus_pid:
+                    priority_ids.add(entry["id"])
+                    break
+        return priority_ids
+
+    def _compute_visible_entry_ids(self):
+        ids = set()
+        if self.tree.viewport().height() <= 0:
+            return ids
+        step = max(self.tree.sizeHintForRow(0), 24)
+        x = max(12, min(self.tree.viewport().width() // 3, 80))
+        for y in range(0, self.tree.viewport().height(), step):
+            index = self.tree.indexAt(QPoint(x, y))
+            if index.isValid():
+                entry_id = index.data(ENTRY_ID_ROLE)
+                if entry_id:
+                    ids.add(entry_id)
+        current_index = self.tree.currentIndex()
+        if current_index.isValid():
+            entry_id = current_index.data(ENTRY_ID_ROLE)
+            if entry_id:
+                ids.add(entry_id)
+        return ids
+
+    def _schedule_visible_row_refresh(self, *_args):
+        if not self._icon_refresh_timer.isActive():
+            self._icon_refresh_timer.start(0)
+
+    def _refresh_visible_icons(self):
+        self._visible_entry_ids = self._compute_visible_entry_ids()
+        for entry_id in self._visible_entry_ids:
+            source_index = self.model.index_for_entry_id(entry_id)
+            if not source_index.isValid():
+                continue
+            entry = self.model.entry_for_row(source_index.row())
+            if entry is None:
+                continue
+            if self._icon_cache_key(entry) in self.icon_cache:
+                continue
+            self._icon_for_entry(entry)
+            proxy_index = self.proxy_model.mapFromSource(source_index)
+            if proxy_index.isValid():
+                self.proxy_model.dataChanged.emit(proxy_index, proxy_index, [Qt.ItemDataRole.DecorationRole])
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress:

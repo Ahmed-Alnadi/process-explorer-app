@@ -1,4 +1,4 @@
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QFont
 
 
@@ -35,6 +35,9 @@ class FlatEntryTableModel(QAbstractTableModel):
         self._entry_kind = entry_kind
         self._entries = []
         self._tabular_font = self._build_tabular_font()
+        self._pending_changed_ids = []
+        self._pending_batch_size = 120
+        self._pending_update_scheduled = False
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -94,9 +97,12 @@ class FlatEntryTableModel(QAbstractTableModel):
             self._headers[column] = label
             self.headerDataChanged.emit(Qt.Orientation.Horizontal, column, column)
 
-    def sync_entries(self, entries):
+    def sync_entries(self, entries, *, priority_ids=None, batch_size=None):
         incoming_entries = list(entries)
         incoming_by_id = {entry["id"]: entry for entry in incoming_entries}
+        priority_ids = set(priority_ids or set())
+        if batch_size:
+            self._pending_batch_size = max(int(batch_size), 24)
 
         for row in range(len(self._entries) - 1, -1, -1):
             if self._entries[row]["id"] in incoming_by_id:
@@ -106,6 +112,7 @@ class FlatEntryTableModel(QAbstractTableModel):
             self.endRemoveRows()
 
         existing_ids = {entry["id"] for entry in self._entries}
+        delayed_changed_ids = []
         for row, entry in enumerate(list(self._entries)):
             updated_entry = incoming_by_id.get(entry["id"])
             if updated_entry is None:
@@ -113,10 +120,13 @@ class FlatEntryTableModel(QAbstractTableModel):
             if entry == updated_entry:
                 continue
             self._entries[row] = updated_entry
-            self.dataChanged.emit(
-                self.index(row, 0),
-                self.index(row, len(self._headers) - 1),
-            )
+            if updated_entry["id"] in priority_ids:
+                self.dataChanged.emit(
+                    self.index(row, 0),
+                    self.index(row, len(self._headers) - 1),
+                )
+            else:
+                delayed_changed_ids.append(updated_entry["id"])
 
         new_entries = [entry for entry in incoming_entries if entry["id"] not in existing_ids]
         if new_entries:
@@ -132,6 +142,12 @@ class FlatEntryTableModel(QAbstractTableModel):
             self.layoutAboutToBeChanged.emit()
             self._entries = [incoming_by_id[entry_id] for entry_id in desired_order]
             self.layoutChanged.emit()
+
+        if delayed_changed_ids:
+            self._pending_changed_ids.extend(
+                entry_id for entry_id in delayed_changed_ids if entry_id not in self._pending_changed_ids
+            )
+            self._schedule_pending_updates()
 
     def clear_entries(self):
         if not self._entries:
@@ -156,6 +172,31 @@ class FlatEntryTableModel(QAbstractTableModel):
         if entry is None:
             return ""
         return self._filter_resolver(entry)
+
+    def _schedule_pending_updates(self):
+        if self._pending_update_scheduled or not self._pending_changed_ids:
+            return
+        self._pending_update_scheduled = True
+        QTimer.singleShot(0, self._flush_pending_updates)
+
+    def _flush_pending_updates(self):
+        self._pending_update_scheduled = False
+        if not self._pending_changed_ids:
+            return
+
+        batch = self._pending_changed_ids[: self._pending_batch_size]
+        del self._pending_changed_ids[: self._pending_batch_size]
+        for entry_id in batch:
+            index = self.index_for_entry_id(entry_id)
+            if not index.isValid():
+                continue
+            self.dataChanged.emit(
+                self.index(index.row(), 0),
+                self.index(index.row(), len(self._headers) - 1),
+            )
+
+        if self._pending_changed_ids:
+            self._schedule_pending_updates()
 
     def _build_tabular_font(self):
         font = QFont()

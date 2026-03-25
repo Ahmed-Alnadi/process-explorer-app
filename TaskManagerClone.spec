@@ -34,6 +34,7 @@ exe = EXE(
     entitlements_file=None,
     version='version_info.txt',
     icon=['assets\\task_manager_icon.ico'],
+    manifest='app.manifest',
 )
 coll = COLLECT(
     exe,

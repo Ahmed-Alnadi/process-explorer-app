@@ -15,6 +15,7 @@ class FlatEntryTableModel(QAbstractTableModel):
         tooltip_resolver=None,
         background_resolver=None,
         secondary_resolver=None,
+        header_tooltips=None,
         tabular_columns=None,
         alignment_columns=None,
         entry_kind="row",
@@ -30,6 +31,7 @@ class FlatEntryTableModel(QAbstractTableModel):
         self._tooltip_resolver = tooltip_resolver
         self._background_resolver = background_resolver
         self._secondary_resolver = secondary_resolver
+        self._header_tooltips = list(header_tooltips or [""] * len(headers))
         self._tabular_columns = set(tabular_columns or set())
         self._alignment_columns = set(alignment_columns or set())
         self._entry_kind = entry_kind
@@ -84,8 +86,11 @@ class FlatEntryTableModel(QAbstractTableModel):
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._headers[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return self._headers[section]
+            if role == Qt.ItemDataRole.ToolTipRole and 0 <= section < len(self._header_tooltips):
+                return self._header_tooltips[section]
         return super().headerData(section, orientation, role)
 
     def flags(self, index):
@@ -96,6 +101,11 @@ class FlatEntryTableModel(QAbstractTableModel):
     def set_header_label(self, column, label):
         if 0 <= column < len(self._headers) and self._headers[column] != label:
             self._headers[column] = label
+            self.headerDataChanged.emit(Qt.Orientation.Horizontal, column, column)
+
+    def set_header_tooltip(self, column, tooltip):
+        if 0 <= column < len(self._header_tooltips) and self._header_tooltips[column] != tooltip:
+            self._header_tooltips[column] = tooltip
             self.headerDataChanged.emit(Qt.Orientation.Horizontal, column, column)
 
     def sync_entries(self, entries, *, priority_ids=None, batch_size=None, refresh_brushes=False):

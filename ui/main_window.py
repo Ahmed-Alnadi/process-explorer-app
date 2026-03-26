@@ -8,7 +8,7 @@ from PySide6.QtGui import QActionGroup, QColor, QCloseEvent, QCursor, QKeySequen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QListWidgetItem, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter, QSplitterHandle, QMenu,
-    QGraphicsDropShadowEffect, QStyle
+    QStyle
 )
 from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.windows_native import native_uptime_seconds
@@ -41,7 +41,7 @@ class MainWindow(QMainWindow):
         if self._refresh_profile_name not in REFRESH_PROFILES:
             self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
 
-        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setWindowFlags(Qt.WindowType.Window)
         self._apply_window_title()
         self.resize(1720, 940)
         self.setMinimumSize(1540, 860)
@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(self.minimize_button)
         title_layout.addWidget(self.maximize_button)
         title_layout.addWidget(self.close_button)
-        root_layout.addWidget(self.title_bar)
+        self.title_bar.hide()
 
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -283,6 +283,7 @@ class MainWindow(QMainWindow):
         self._apply_depth_effects()
         self._position_backdrop_orbs()
         self._update_title_bar_state()
+        self._apply_native_window_theme()
 
     def update_page_context(self, index):
         if index == 1:
@@ -358,6 +359,8 @@ class MainWindow(QMainWindow):
             QEvent.Type.Hide,
         ):
             QTimer.singleShot(0, self._update_runtime_pause_state)
+        if event.type() in (QEvent.Type.Show, QEvent.Type.WindowStateChange):
+            QTimer.singleShot(0, self._apply_native_window_theme)
         return super().event(event)
 
     def moveEvent(self, event):
@@ -645,15 +648,8 @@ class MainWindow(QMainWindow):
         self.setGeometry(geometry)
 
     def _apply_depth_effects(self):
-        for widget, blur_radius, offset_y, alpha in (
-            (self.sidebar, 34, 12, 72),
-            (self.content_panel, 48, 18, 92),
-        ):
-            shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(blur_radius)
-            shadow.setOffset(0, offset_y)
-            shadow.setColor(QColor(3, 8, 16, alpha))
-            widget.setGraphicsEffect(shadow)
+        for widget in (self.sidebar, self.content_panel):
+            widget.setGraphicsEffect(None)
 
     def _position_backdrop_orbs(self):
         root = self.centralWidget()
@@ -692,6 +688,46 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(title)
         if hasattr(self, "window_title_label"):
             self.window_title_label.setText(self._base_window_title)
+
+    def _apply_native_window_theme(self):
+        if sys.platform != "win32":
+            return
+        try:
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            dwmapi = ctypes.windll.dwmapi
+            use_dark_mode = ctypes.c_int(1)
+            dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                20,
+                ctypes.byref(use_dark_mode),
+                ctypes.sizeof(use_dark_mode),
+            )
+
+            def colorref(hex_rgb):
+                hex_rgb = hex_rgb.lstrip("#")
+                red = int(hex_rgb[0:2], 16)
+                green = int(hex_rgb[2:4], 16)
+                blue = int(hex_rgb[4:6], 16)
+                return red | (green << 8) | (blue << 16)
+
+            caption_color = ctypes.c_int(colorref("09131d"))
+            border_color = ctypes.c_int(colorref("13233a"))
+            text_color = ctypes.c_int(colorref("eef5fb"))
+            for attribute, value in (
+                (35, caption_color),  # DWMWA_CAPTION_COLOR
+                (34, border_color),   # DWMWA_BORDER_COLOR
+                (36, text_color),     # DWMWA_TEXT_COLOR
+            ):
+                dwmapi.DwmSetWindowAttribute(
+                    hwnd,
+                    attribute,
+                    ctypes.byref(value),
+                    ctypes.sizeof(value),
+                )
+        except Exception:
+            pass
 
     def _build_refresh_menu(self):
         self.refresh_menu = QMenu(self)

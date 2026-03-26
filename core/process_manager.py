@@ -21,6 +21,7 @@ from core.subprocess_utils import hidden_subprocess_kwargs
 from core.windows_native import (
     NativeCpuUsageMonitor,
     NativeDiskActivityMonitor,
+    NativeProcessCpuUtilityMonitor,
     native_memory_status,
     native_process_private_bytes,
 )
@@ -53,6 +54,7 @@ class ProcessManager:
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
         self._cpu_monitor = NativeCpuUsageMonitor()
+        self._process_cpu_monitor = NativeProcessCpuUtilityMonitor(self._cpu_count)
         self._disk_monitor = NativeDiskActivityMonitor()
         self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
         self._low_overhead_mode = False
@@ -80,10 +82,12 @@ class ProcessManager:
 
         window_titles_by_pid = self._visible_windows_by_pid()
         service_snapshot = self._service_links.snapshot()
+        cpu_utility_by_pid = self._process_cpu_monitor.read()
         process_entries, active_pids = self._collect_process_entries(
             interval,
             window_titles_by_pid,
             service_snapshot,
+            cpu_utility_by_pid,
             None,
         )
         grouped_processes = {}
@@ -198,10 +202,12 @@ class ProcessManager:
 
         window_titles_by_pid = self._visible_windows_by_pid()
         service_snapshot = self._service_links.snapshot()
+        cpu_utility_by_pid = self._process_cpu_monitor.read()
         process_entries, active_pids = self._collect_process_entries(
             interval,
             window_titles_by_pid,
             service_snapshot,
+            cpu_utility_by_pid,
             None,
         )
 
@@ -384,7 +390,14 @@ class ProcessManager:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-    def _collect_process_entries(self, interval, window_titles_by_pid, service_snapshot, startup_entries):
+    def _collect_process_entries(
+        self,
+        interval,
+        window_titles_by_pid,
+        service_snapshot,
+        cpu_utility_by_pid,
+        startup_entries,
+    ):
         active_pids = set()
         process_entries = []
         sample_time = time.time()
@@ -419,7 +432,9 @@ class ProcessManager:
 
                 active_pids.add(pid)
 
-                cpu_percent = self._sample_process_cpu_percent(proc, interval)
+                cpu_percent = cpu_utility_by_pid.get(pid)
+                if cpu_percent is None:
+                    cpu_percent = self._sample_process_cpu_percent(proc, interval)
 
                 memory_bytes = self._process_memory_bytes(proc, sample_time)
                 memory_mb = memory_bytes / (1024 * 1024)

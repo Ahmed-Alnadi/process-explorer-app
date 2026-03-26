@@ -10,7 +10,6 @@ from PySide6.QtCore import QPointF, Qt, QTimer, QSettings
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -28,8 +27,10 @@ from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.subprocess_utils import hidden_subprocess_kwargs
 from core.windows_native import (
     NativeCpuUsageMonitor,
+    NativeCpuTotalUsageMonitor,
     NativeDiskActivityMonitor,
     NativeGpuUsageMonitor,
+    native_cpu_package_temperature_c,
     native_memory_status,
     native_network_adapters,
     native_uptime_seconds,
@@ -170,12 +171,6 @@ class MetricCard(QFrame):
         layout.addWidget(self.graph)
         layout.addWidget(self.history_label)
 
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 14)
-        shadow.setColor(QColor(4, 10, 18, 90))
-        self.setGraphicsEffect(shadow)
-
     def update_metric(self, value_text, progress_value, subtitle):
         bounded_value = max(0, min(int(progress_value), 100))
         if value_text != self._last_value_text:
@@ -206,9 +201,11 @@ class MetricCard(QFrame):
 
 
 class DetailSection(QFrame):
-    def __init__(self, title):
+    def __init__(self, title, metric_role=None):
         super().__init__()
         self.setObjectName("detailSection")
+        if metric_role:
+            self.setProperty("metricRole", metric_role)
         self._value_labels = {}
         self._row_order = []
 
@@ -219,18 +216,16 @@ class DetailSection(QFrame):
 
         title_label = QLabel(title)
         title_label.setObjectName("detailSectionTitle")
+        if metric_role:
+            title_label.setProperty("metricRole", metric_role)
         layout.addWidget(title_label)
 
         self.rows_layout = QGridLayout()
         self.rows_layout.setHorizontalSpacing(16)
         self.rows_layout.setVerticalSpacing(10)
+        self.rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addLayout(self.rows_layout)
-
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(30)
-        shadow.setOffset(0, 12)
-        shadow.setColor(QColor(4, 10, 18, 74))
-        self.setGraphicsEffect(shadow)
+        layout.addStretch(1)
 
     def set_rows(self, rows):
         rows = list(rows)
@@ -273,10 +268,13 @@ class PerformanceTab(QWidget):
         self._last_adapter_snapshot = {}
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
+        self._last_cpu_temperature_update = 0.0
+        self._cached_cpu_package_temp_c = None
         self._last_connections_update = 0.0
         self._cached_connections_text = "N/A"
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
         self._cpu_monitor = NativeCpuUsageMonitor()
+        self._cpu_usage_monitor = NativeCpuTotalUsageMonitor()
         self._disk_monitor = NativeDiskActivityMonitor()
         self._gpu_monitor = NativeGpuUsageMonitor()
         self._cpu_name_value = self._cpu_name()
@@ -341,17 +339,47 @@ class PerformanceTab(QWidget):
         metrics_layout.setHorizontalSpacing(14)
         metrics_layout.setVerticalSpacing(14)
 
-        self.cpu_card = MetricCard("CPU Usage", "#5ec8ff", "cpu")
+        self.cpu_card = MetricCard("CPU Utility", "#5ec8ff", "cpu")
         self.memory_card = MetricCard("Physical Memory", "#2ed3a8", "memory")
         self.disk_card = MetricCard("Disk Active Time", "#ffb84d", "disk")
-        self.network_card = MetricCard("Network Activity", "#ff6bb0", "network")
+        self.total_cpu_usage_card = MetricCard("Total CPU Usage", "#78a8ff", "cpu")
         self.gpu_usage_card = MetricCard("GPU Usage", "#ff8b6b", "gpu")
         self.gpu_temp_card = MetricCard("GPU Temp", "#ff6b8f", "temperature")
+        self.cpu_card.setToolTip(
+            "CPU Utility\n"
+            "Windows Processor Utility percentage.\n"
+            "This tracks effective CPU utilization and matches the modern Task Manager-style utility metric."
+        )
+        self.memory_card.setToolTip(
+            "Physical Memory\n"
+            "Current physical memory load percentage.\n"
+            "Calculated from used physical RAM divided by total physical RAM."
+        )
+        self.disk_card.setToolTip(
+            "Disk Active Time\n"
+            "How busy the total disk subsystem is.\n"
+            "Calculated from the Windows PhysicalDisk(_Total) active/idle counter."
+        )
+        self.total_cpu_usage_card.setToolTip(
+            "Total CPU Usage\n"
+            "Average utilization of the entire CPU package.\n"
+            "This is the average of all core and thread activity across the processor."
+        )
+        self.gpu_usage_card.setToolTip(
+            "GPU Usage\n"
+            "Busiest observed GPU engine utilization.\n"
+            "Calculated from native Windows GPU engine counters."
+        )
+        self.gpu_temp_card.setToolTip(
+            "GPU Temperature\n"
+            "Current GPU temperature in degrees Celsius.\n"
+            "Read from NVIDIA telemetry when available."
+        )
 
         metrics_layout.addWidget(self.cpu_card, 0, 0)
         metrics_layout.addWidget(self.memory_card, 0, 1)
         metrics_layout.addWidget(self.disk_card, 0, 2)
-        metrics_layout.addWidget(self.network_card, 1, 0)
+        metrics_layout.addWidget(self.total_cpu_usage_card, 1, 0)
         metrics_layout.addWidget(self.gpu_usage_card, 1, 1)
         metrics_layout.addWidget(self.gpu_temp_card, 1, 2)
         layout.addLayout(metrics_layout)
@@ -360,19 +388,29 @@ class PerformanceTab(QWidget):
         detail_layout.setHorizontalSpacing(14)
         detail_layout.setVerticalSpacing(14)
 
-        self.processor_section = DetailSection("Processor")
+        self.processor_section = DetailSection("Processor", "cpu")
         self.processor_section.set_rows(
-            ["Model", "Logical Cores", "Physical Cores", "Current Frequency", "Max Frequency", "Uptime"]
+            [
+                "Model",
+                "CPU Utility",
+                "Total CPU Usage",
+                "CPU Package Temp",
+                "Logical Cores",
+                "Physical Cores",
+                "Current Frequency",
+                "Max Frequency",
+                "Uptime",
+            ]
         )
-        self.memory_section = DetailSection("Memory")
+        self.memory_section = DetailSection("Memory", "memory")
         self.memory_section.set_rows(
             ["Total", "Available", "Used", "Cached", "Swap Used", "Swap Total"]
         )
-        self.storage_section = DetailSection("Storage")
+        self.storage_section = DetailSection("Storage", "disk")
         self.storage_section.set_rows(
             ["System Drive", "Drive Used", "Drive Free", "Read Speed", "Write Speed", "Partitions"]
         )
-        self.network_section = DetailSection("Network")
+        self.network_section = DetailSection("Network", "network")
         self.network_section.set_rows(
             ["Download Speed", "Upload Speed", "Downloaded", "Uploaded", "Connections", "Hostname"]
         )
@@ -390,7 +428,16 @@ class PerformanceTab(QWidget):
             "CPU",
             "#5ec8ff",
             "CPU Analysis",
-            ["Usage", "Current Frequency", "Max Frequency", "Logical Cores", "Physical Cores", "Uptime"],
+            [
+                "CPU Utility",
+                "Total CPU Usage",
+                "CPU Package Temp",
+                "Current Frequency",
+                "Max Frequency",
+                "Logical Cores",
+                "Physical Cores",
+                "Uptime",
+            ],
         )
         self.memory_focus_card, self.memory_focus_details = self._add_focus_page(
             "Memory",
@@ -410,7 +457,7 @@ class PerformanceTab(QWidget):
             "Network Analysis",
             ["Download Speed", "Upload Speed", "Downloaded", "Uploaded", "Connections", "Hostname"],
         )
-        self.network_adapter_section = DetailSection("Adapters")
+        self.network_adapter_section = DetailSection("Adapters", "network")
         self.network_adapter_section.set_rows(["No active adapters"])
         self.stack.widget(4).widget().layout().addWidget(self.network_adapter_section)
         self.gpu_focus_card, self.gpu_focus_details = self._add_focus_page(
@@ -419,14 +466,14 @@ class PerformanceTab(QWidget):
             "GPU Analysis",
             ["Usage", "Busiest Engine", "Adapter", "Adapters", "Temperature", "Status"],
         )
-        self.gpu_engine_section = DetailSection("GPU Engines")
+        self.gpu_engine_section = DetailSection("GPU Engines", "gpu")
         self.gpu_engine_section.set_rows(["No active GPU engines"])
         self.stack.widget(5).widget().layout().addWidget(self.gpu_engine_section)
 
     def _add_focus_page(self, title, accent_color, section_title, rows):
         page, layout = self._create_scroll_page()
         card = MetricCard(title, accent_color, title.lower())
-        section = DetailSection(section_title)
+        section = DetailSection(section_title, title.lower())
         section.set_rows(rows)
         layout.addWidget(card)
         layout.addWidget(section)
@@ -460,6 +507,9 @@ class PerformanceTab(QWidget):
         cpu_percent = self._cpu_monitor.read_percent()
         if cpu_percent is None:
             cpu_percent = psutil.cpu_percent(interval=None)
+        cpu_usage_percent = self._cpu_usage_monitor.read_percent()
+        if cpu_usage_percent is None:
+            cpu_usage_percent = psutil.cpu_percent(interval=None)
         native_memory = native_memory_status()
         memory = psutil.virtual_memory()
         if native_memory is not None:
@@ -478,6 +528,7 @@ class PerformanceTab(QWidget):
         disk_active_percent, read_bytes_per_sec, write_bytes_per_sec = self._disk_metrics()
         adapter_metrics, download_per_sec, upload_per_sec, total_received, total_sent = self._network_metrics()
         gpu_temp_c = self._gpu_temperature()
+        cpu_package_temp_c = self._cpu_package_temperature()
         gpu_metrics = self._gpu_metrics()
         cpu_freq = psutil.cpu_freq()
         physical_cores = psutil.cpu_count(logical=False) or 0
@@ -491,6 +542,7 @@ class PerformanceTab(QWidget):
 
         metrics = {
             "cpu_percent": cpu_percent,
+            "cpu_usage_percent": cpu_usage_percent,
             "memory_percent": memory_percent,
             "total_memory": total_memory,
             "available_memory": available_memory,
@@ -507,6 +559,7 @@ class PerformanceTab(QWidget):
             "total_received": total_received,
             "total_sent": total_sent,
             "gpu_temp_c": gpu_temp_c,
+            "cpu_package_temp_c": cpu_package_temp_c,
             "gpu_metrics": gpu_metrics,
             "gpu_percent": gpu_percent,
             "gpu_busiest_name": gpu_busiest_name,
@@ -585,6 +638,10 @@ class PerformanceTab(QWidget):
     def shutdown(self):
         try:
             self._cpu_monitor.close()
+        except Exception:
+            pass
+        try:
+            self._cpu_usage_monitor.close()
         except Exception:
             pass
         try:
@@ -729,6 +786,15 @@ class PerformanceTab(QWidget):
     def _gpu_metrics(self):
         return self._gpu_monitor.read()
 
+    def _cpu_package_temperature(self):
+        current_time = time.time()
+        if current_time - self._last_cpu_temperature_update < self._temperature_cache_ttl:
+            return self._cached_cpu_package_temp_c
+
+        self._last_cpu_temperature_update = current_time
+        self._cached_cpu_package_temp_c = native_cpu_package_temperature_c()
+        return self._cached_cpu_package_temp_c
+
     def _read_nvidia_gpu_temperature(self):
         if not self._nvidia_smi_path:
             return None
@@ -797,7 +863,10 @@ class PerformanceTab(QWidget):
         self.cpu_card.update_metric(
             f"{metrics['cpu_percent']:.1f}%",
             metrics["cpu_percent"],
-            f"{self._frequency_text(metrics['cpu_freq'])} | {metrics['logical_cores']} logical / {metrics['physical_cores']} physical",
+            (
+                f"Usage {metrics['cpu_usage_percent']:.1f}% | "
+                f"{self._frequency_text(metrics['cpu_freq'])}"
+            ),
         )
         self.memory_card.update_metric(
             f"{metrics['memory_percent']:.1f}%",
@@ -809,10 +878,10 @@ class PerformanceTab(QWidget):
             metrics["disk_active_percent"],
             f"Read {self._format_bytes(metrics['read_bytes_per_sec'])}/s | Write {self._format_bytes(metrics['write_bytes_per_sec'])}/s",
         )
-        self.network_card.update_metric(
-            f"{self._format_bytes(metrics['download_per_sec'])}/s",
-            metrics["network_progress"],
-            f"Upload {self._format_bytes(metrics['upload_per_sec'])}/s",
+        self.total_cpu_usage_card.update_metric(
+            f"{metrics['cpu_usage_percent']:.1f}%",
+            metrics["cpu_usage_percent"],
+            "Average utilization across all cores and threads",
         )
         self.gpu_usage_card.update_metric(
             f"{metrics['gpu_percent']:.1f}%",
@@ -830,6 +899,9 @@ class PerformanceTab(QWidget):
         self.processor_section.update_values(
             {
                 "Model": self._cpu_name_value,
+                "CPU Utility": f"{metrics['cpu_percent']:.1f}%",
+                "Total CPU Usage": f"{metrics['cpu_usage_percent']:.1f}%",
+                "CPU Package Temp": self._format_temperature(metrics["cpu_package_temp_c"]),
                 "Logical Cores": str(metrics["logical_cores"]),
                 "Physical Cores": str(metrics["physical_cores"]),
                 "Current Frequency": self._frequency_text(metrics["cpu_freq"]),
@@ -872,11 +944,13 @@ class PerformanceTab(QWidget):
         self.cpu_focus_card.update_metric(
             f"{metrics['cpu_percent']:.1f}%",
             metrics["cpu_percent"],
-            "Realtime processor utilization",
+            f"Total CPU Usage {metrics['cpu_usage_percent']:.1f}%",
         )
         self.cpu_focus_details.update_values(
             {
-                "Usage": f"{metrics['cpu_percent']:.1f}%",
+                "CPU Utility": f"{metrics['cpu_percent']:.1f}%",
+                "Total CPU Usage": f"{metrics['cpu_usage_percent']:.1f}%",
+                "CPU Package Temp": self._format_temperature(metrics["cpu_package_temp_c"]),
                 "Current Frequency": self._frequency_text(metrics["cpu_freq"]),
                 "Max Frequency": self._max_frequency_text(metrics["cpu_freq"]),
                 "Logical Cores": str(metrics["logical_cores"]),
@@ -1106,7 +1180,7 @@ class PerformanceTab(QWidget):
             rows.extend(self._section_export_rows("Overview CPU", self.cpu_card.export_rows()))
             rows.extend(self._section_export_rows("Overview Memory", self.memory_card.export_rows()))
             rows.extend(self._section_export_rows("Overview Disk", self.disk_card.export_rows()))
-            rows.extend(self._section_export_rows("Overview Network", self.network_card.export_rows()))
+            rows.extend(self._section_export_rows("Overview Total CPU Usage", self.total_cpu_usage_card.export_rows()))
             rows.extend(self._section_export_rows("Overview GPU Usage", self.gpu_usage_card.export_rows()))
             rows.extend(self._section_export_rows("Overview GPU Temp", self.gpu_temp_card.export_rows()))
             rows.extend(self._section_export_rows("Processor", self.processor_section.export_rows()))

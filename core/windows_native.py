@@ -1,5 +1,8 @@
 import ctypes
+import subprocess
 from ctypes import wintypes
+
+from core.subprocess_utils import hidden_subprocess_kwargs
 
 
 ERROR_MORE_DATA = 234
@@ -501,6 +504,223 @@ class NativeCpuUsageMonitor:
             return None
 
 
+class NativeCpuTotalUsageMonitor:
+    def __init__(self):
+        self._pdh = None
+        self._query = wintypes.HANDLE()
+        self._counter = wintypes.HANDLE()
+        self._ready = False
+        self._initialize()
+
+    def _initialize(self):
+        try:
+            self._pdh = ctypes.WinDLL("pdh", use_last_error=True)
+        except Exception:
+            return
+
+        self._pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+        self._pdh.PdhOpenQueryW.restype = wintypes.DWORD
+        self._pdh.PdhAddEnglishCounterW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self._pdh.PdhAddEnglishCounterW.restype = wintypes.DWORD
+        self._pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCollectQueryData.restype = wintypes.DWORD
+        self._pdh.PdhGetFormattedCounterValue.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(PDH_FMT_COUNTERVALUE),
+        ]
+        self._pdh.PdhGetFormattedCounterValue.restype = wintypes.DWORD
+        self._pdh.PdhCloseQuery.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCloseQuery.restype = wintypes.DWORD
+
+        if self._pdh.PdhOpenQueryW(None, None, ctypes.byref(self._query)) != 0:
+            return
+
+        if self._pdh.PdhAddEnglishCounterW(
+            self._query,
+            "\\Processor(_Total)\\% Processor Time",
+            None,
+            ctypes.byref(self._counter),
+        ) != 0:
+            self._pdh.PdhCloseQuery(self._query)
+            self._query = wintypes.HANDLE()
+            return
+
+        self._pdh.PdhCollectQueryData(self._query)
+        self._ready = True
+
+    def close(self):
+        if self._pdh is not None and self._query:
+            try:
+                self._pdh.PdhCloseQuery(self._query)
+            except Exception:
+                pass
+        self._ready = False
+
+    def read_percent(self):
+        if not self._ready:
+            return None
+        try:
+            if self._pdh.PdhCollectQueryData(self._query) != 0:
+                return None
+            counter_type = wintypes.DWORD(0)
+            value = PDH_FMT_COUNTERVALUE()
+            if self._pdh.PdhGetFormattedCounterValue(
+                self._counter,
+                PDH_FMT_DOUBLE,
+                ctypes.byref(counter_type),
+                ctypes.byref(value),
+            ) != 0:
+                return None
+            return max(0.0, min(float(value.unionValue.doubleValue), 100.0))
+        except Exception:
+            return None
+
+
+class NativeProcessCpuUtilityMonitor:
+    def __init__(self, logical_cpu_count):
+        self._pdh = None
+        self._query = wintypes.HANDLE()
+        self._utility_counter = wintypes.HANDLE()
+        self._id_counter = wintypes.HANDLE()
+        self._ready = False
+        self._logical_cpu_count = max(int(logical_cpu_count or 1), 1)
+        self._initialize()
+
+    def _initialize(self):
+        try:
+            self._pdh = ctypes.WinDLL("pdh", use_last_error=True)
+        except Exception:
+            return
+
+        self._pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+        self._pdh.PdhOpenQueryW.restype = wintypes.DWORD
+        self._pdh.PdhAddEnglishCounterW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self._pdh.PdhAddEnglishCounterW.restype = wintypes.DWORD
+        self._pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCollectQueryData.restype = wintypes.DWORD
+        self._pdh.PdhGetFormattedCounterArrayW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.c_void_p,
+        ]
+        self._pdh.PdhGetFormattedCounterArrayW.restype = wintypes.DWORD
+        self._pdh.PdhCloseQuery.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCloseQuery.restype = wintypes.DWORD
+
+        if self._pdh.PdhOpenQueryW(None, None, ctypes.byref(self._query)) != 0:
+            return
+
+        utility_paths = (
+            "\\Process(*)\\% Processor Utility",
+            "\\Process(*)\\% Processor Time",
+        )
+        utility_added = False
+        for path in utility_paths:
+            if self._pdh.PdhAddEnglishCounterW(self._query, path, None, ctypes.byref(self._utility_counter)) == 0:
+                utility_added = True
+                break
+
+        if not utility_added:
+            self._pdh.PdhCloseQuery(self._query)
+            self._query = wintypes.HANDLE()
+            return
+
+        if self._pdh.PdhAddEnglishCounterW(
+            self._query,
+            "\\Process(*)\\ID Process",
+            None,
+            ctypes.byref(self._id_counter),
+        ) != 0:
+            self._pdh.PdhCloseQuery(self._query)
+            self._query = wintypes.HANDLE()
+            self._utility_counter = wintypes.HANDLE()
+            return
+
+        self._pdh.PdhCollectQueryData(self._query)
+        self._ready = True
+
+    def close(self):
+        if self._pdh is not None and self._query:
+            try:
+                self._pdh.PdhCloseQuery(self._query)
+            except Exception:
+                pass
+        self._ready = False
+
+    def read(self):
+        if not self._ready:
+            return {}
+        try:
+            if self._pdh.PdhCollectQueryData(self._query) != 0:
+                return {}
+            utilities = self._read_counter_map(self._utility_counter)
+            process_ids = self._read_counter_map(self._id_counter)
+            values_by_pid = {}
+            for instance_name, process_id_value in process_ids.items():
+                try:
+                    pid = int(process_id_value)
+                except Exception:
+                    continue
+                if pid <= 0:
+                    continue
+                if instance_name.lower() in {"_total", "idle"}:
+                    continue
+                raw_utility = float(utilities.get(instance_name, 0.0))
+                normalized_utility = max(0.0, min(raw_utility / self._logical_cpu_count, 100.0))
+                values_by_pid[pid] = normalized_utility
+            return values_by_pid
+        except Exception:
+            return {}
+
+    def _read_counter_map(self, counter_handle):
+        buffer_size = wintypes.DWORD(0)
+        item_count = wintypes.DWORD(0)
+        status = self._pdh.PdhGetFormattedCounterArrayW(
+            counter_handle,
+            PDH_FMT_DOUBLE,
+            ctypes.byref(buffer_size),
+            ctypes.byref(item_count),
+            None,
+        )
+        if status not in (0, PDH_MORE_DATA) or buffer_size.value <= 0 or item_count.value <= 0:
+            return {}
+
+        buffer = ctypes.create_string_buffer(buffer_size.value)
+        status = self._pdh.PdhGetFormattedCounterArrayW(
+            counter_handle,
+            PDH_FMT_DOUBLE,
+            ctypes.byref(buffer_size),
+            ctypes.byref(item_count),
+            buffer,
+        )
+        if status != 0:
+            return {}
+
+        array_type = PDH_FMT_COUNTERVALUE_ITEM_W * item_count.value
+        items = ctypes.cast(buffer, ctypes.POINTER(array_type)).contents
+        values = {}
+        for item in items:
+            instance_name = (item.szName or "").strip()
+            if not instance_name:
+                continue
+            values[instance_name] = float(item.FmtValue.unionValue.doubleValue)
+        return values
+
+
 class NativeDiskActivityMonitor:
     def __init__(self):
         self._pdh = None
@@ -578,6 +798,69 @@ class NativeDiskActivityMonitor:
             return max(0.0, 100.0 - idle_percent)
         except Exception:
             return None
+
+
+def native_cpu_package_temperature_c():
+    sensor_script = r"""
+$namespaces = @('root\LibreHardwareMonitor', 'root\OpenHardwareMonitor')
+foreach ($ns in $namespaces) {
+    try {
+        $sensors = Get-CimInstance -Namespace $ns -ClassName Sensor -ErrorAction Stop |
+            Where-Object { $_.SensorType -eq 'Temperature' }
+        if (-not $sensors) { continue }
+
+        $preferred = $sensors |
+            Where-Object { $_.Name -match 'CPU Package|Package id|Package|Tctl|Tdie|CPU CCD|CPU Die|Core Max' } |
+            Sort-Object Value -Descending |
+            Select-Object -First 1
+        if (-not $preferred) {
+            $preferred = $sensors |
+                Where-Object { $_.Name -match 'CPU|Core' } |
+                Sort-Object Value -Descending |
+                Select-Object -First 1
+        }
+        if ($preferred) {
+            [Console]::WriteLine([string]$preferred.Value)
+            exit 0
+        }
+    } catch { }
+}
+
+try {
+    $zones = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop
+    if ($zones) {
+        $temps = $zones |
+            ForEach-Object { ($_.CurrentTemperature / 10.0) - 273.15 } |
+            Sort-Object -Descending
+        if ($temps) {
+            [Console]::WriteLine([string]$temps[0])
+            exit 0
+        }
+    }
+} catch { }
+"""
+
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", sensor_script],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=True,
+            **hidden_subprocess_kwargs(),
+        )
+    except Exception:
+        return None
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            return float(line)
+        except ValueError:
+            continue
+    return None
 
 
 def native_dependent_services(service_name):

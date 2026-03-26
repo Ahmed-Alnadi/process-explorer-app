@@ -307,6 +307,15 @@ class ServicesTab(QWidget):
             "User",
             "Binary Path",
         ]
+        self._column_tooltips = [
+            "The internal Windows service name.",
+            "The display name shown by Windows for the service.",
+            "Current runtime state of the service.",
+            "How Windows is configured to start the service.",
+            "The linked running process identifier when the service has one.",
+            "The account the service is running under.",
+            "Executable or configured binary path for the service.",
+        ]
         self._active = False
         self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
         self._timer_interval_ms = REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE]["services_timer_ms"]
@@ -329,6 +338,7 @@ class ServicesTab(QWidget):
 
         self.model = FlatEntryTableModel(
             headers=self._column_labels,
+            header_tooltips=self._column_tooltips,
             roles={
                 "sort": SORT_ROLE,
                 "entry": ENTRY_ROLE,
@@ -340,7 +350,7 @@ class ServicesTab(QWidget):
             sort_resolver=self._sort_value,
             filter_resolver=self._filter_text_for_entry,
             icon_resolver=self._icon_for_entry,
-            tooltip_resolver=self._tooltip_value,
+            tooltip_resolver=None,
             background_resolver=self._background_brush,
             tabular_columns={4},
             alignment_columns={4},

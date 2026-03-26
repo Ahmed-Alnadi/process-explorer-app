@@ -26,7 +26,7 @@ from core.process_manager import ProcessManager, ProcessTerminationBlockedError
 from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from ui.export_utils import export_rows_to_csv
 from ui.flat_entry_model import EntryFilterProxyModel, FlatEntryTableModel
-from ui.heatmap_utils import disk_intensity_from_rate, protected_heat_brush, resource_heat_brush
+from ui.heatmap_utils import disk_intensity_from_rate, protected_heat_brush
 from ui.process_actions import copy_text_to_clipboard, open_file_location, search_online
 from ui.process_tree_model import ClearableTreeView
 from ui.processes_tab import (
@@ -221,6 +221,16 @@ class DetailsTab(QWidget):
             "Memory %",
             "Disk (0%)",
         ]
+        self._column_tooltips = [
+            "Process name.",
+            "The process identifier for this running process.",
+            "Whether the entry is an app, background process, or Windows process.",
+            "Publisher or company information from the executable metadata.",
+            "Visible window title when available, otherwise background status.",
+            "Per-process CPU utility/current core-thread utilization.",
+            "Current physical memory share for this process.",
+            "Per-process disk throughput. The header percent shows overall disk active time.",
+        ]
         self._active = True
         self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
         self._timer_interval_ms = REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE]["details_timer_ms"]
@@ -243,6 +253,7 @@ class DetailsTab(QWidget):
 
         self.model = FlatEntryTableModel(
             headers=self._column_labels,
+            header_tooltips=self._column_tooltips,
             roles={
                 "sort": SORT_ROLE,
                 "entry": ENTRY_ROLE,
@@ -254,7 +265,7 @@ class DetailsTab(QWidget):
             sort_resolver=self._sort_value,
             filter_resolver=self._filter_text_for_entry,
             icon_resolver=self._icon_for_entry,
-            tooltip_resolver=self._tooltip_value,
+            tooltip_resolver=None,
             background_resolver=self._background_brush,
             secondary_resolver=self._secondary_value,
             tabular_columns={1, 5, 6, 7},
@@ -968,12 +979,6 @@ class DetailsTab(QWidget):
     def _background_brush(self, entry, column):
         if column == 0 and entry.get("is_protected"):
             return protected_heat_brush()
-        if column == 5:
-            return resource_heat_brush(entry["cpu_percent"] / 100.0)
-        if column == 6:
-            return resource_heat_brush(entry["memory_percent"] / 100.0)
-        if column == 7:
-            return resource_heat_brush(disk_intensity_from_rate(entry["disk_rate_mb_per_sec"]))
         return None
 
     def _secondary_value(self, entry, column):

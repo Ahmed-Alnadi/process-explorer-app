@@ -2,7 +2,7 @@ from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QTreeView
 
-from ui.heatmap_utils import disk_intensity_from_rate, protected_heat_brush, resource_heat_brush
+from ui.heatmap_utils import protected_heat_brush
 
 
 class ProcessNode:
@@ -49,6 +49,16 @@ class ProcessTreeModel(QAbstractItemModel):
             "CPU %",
             "Memory %",
             "Disk (0%)",
+        ]
+        self._header_tooltips = [
+            "Process or app name. Group rows can represent multiple related processes.",
+            "Whether the entry is an app, background process, or Windows process.",
+            "Publisher or company information from the executable metadata.",
+            "Visible window title when available, otherwise background status.",
+            "PID for a single process, or the number of grouped processes.",
+            "Per-process CPU utility/current core-thread utilization. Group rows aggregate their children.",
+            "Current physical memory share for the process or group.",
+            "Per-process disk throughput. The header percent shows overall disk active time.",
         ]
         self._root = ProcessNode()
         self._node_by_id = {}
@@ -174,6 +184,10 @@ class ProcessTreeModel(QAbstractItemModel):
         if self._headers[7] == label:
             return
         self._headers[7] = label
+        self._header_tooltips[7] = (
+            f"Per-process disk throughput. The current header value shows overall disk active time "
+            f"({disk_active_percent:.0f}%)."
+        )
         self.headerDataChanged.emit(Qt.Orientation.Horizontal, 7, 7)
 
     def rowCount(self, parent=QModelIndex()):
@@ -226,8 +240,6 @@ class ProcessTreeModel(QAbstractItemModel):
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         if role == Qt.ItemDataRole.FontRole and column in (4, 5, 6, 7):
             return self._tabular_font
-        if role == Qt.ItemDataRole.ToolTipRole:
-            return self._tooltip_value(entry, column)
         if role == roles["sort"]:
             return self._sort_value(entry, node.kind, column)
         if role == roles["entry"]:
@@ -241,8 +253,11 @@ class ProcessTreeModel(QAbstractItemModel):
         return None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return self._headers[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return self._headers[section]
+            if role == Qt.ItemDataRole.ToolTipRole and 0 <= section < len(self._header_tooltips):
+                return self._header_tooltips[section]
         return super().headerData(section, orientation, role)
 
     def flags(self, index):
@@ -466,13 +481,6 @@ class ProcessTreeModel(QAbstractItemModel):
     def _background_brush(self, entry, kind, column):
         if column == 0 and entry.get("is_protected"):
             return protected_heat_brush()
-        if column == 5:
-            return resource_heat_brush(entry["cpu_percent"] / 100.0)
-        if column == 6:
-            return resource_heat_brush(entry["memory_percent"] / 100.0)
-        if column == 7:
-            disk_value = entry["disk_mb_per_sec"] if kind == "group" else entry["disk_rate_mb_per_sec"]
-            return resource_heat_brush(disk_intensity_from_rate(disk_value))
         return None
 
     def _changed_columns(self, old_entry, new_entry, kind, refresh_brushes):

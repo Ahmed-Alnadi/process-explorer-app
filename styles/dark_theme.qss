@@ -54,8 +54,9 @@ QToolTip {
 }
 
 #windowStatusLabel {
-    color: #d7e5ef;
+    color: #ffffff;
     font-size: 11px;
+    font-weight: 600;
 }
 
 #titleBarButton,
@@ -184,8 +185,9 @@ QToolTip {
 }
 
 #headerSubtitle {
-    color: #d3e1ec;
+    color: #ffffff;
     font-size: 13px;
+    font-weight: 600;
     margin-bottom: 5px;
     background: transparent;
 }
@@ -383,20 +385,23 @@ QSplitter::handle:hover {
 }
 
 #sidePanelSubtitle {
-    color: #dce7ef;
+    color: #ffffff;
     font-size: 12px;
+    font-weight: 600;
 }
 
 #sideKey,
 #detailKey {
-    color: #dbe8f1;
+    color: #ffffff;
     font-size: 12px;
+    font-weight: 600;
 }
 
 #sideValue,
 #detailValue {
-    color: #f1f7fc;
+    color: #ffffff;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-weight: 700;
     padding-top: 2px;
 }
 
@@ -427,7 +432,8 @@ QScrollArea#perfScroll {
     padding: 11px 13px;
     margin: 4px 0;
     border-radius: 12px;
-    color: #edf4fa;
+    color: #ffffff;
+    font-weight: 600;
 }
 
 #perfSidebar[compactMode="true"]::item {
@@ -498,13 +504,22 @@ QScrollArea#perfScroll {
     letter-spacing: 1px;
 }
 
-#perfCardTitle[metricRole="cpu"] { color: #89d7ff; }
-#perfCardTitle[metricRole="memory"] { color: #7fe4c1; }
-#perfCardTitle[metricRole="disk"] { color: #ffd078; }
-#perfCardTitle[metricRole="network"] { color: #ff95dc; }
+#perfCardTitle[metricRole="cpu"],
+#detailSectionTitle[metricRole="cpu"] { color: #89d7ff; }
+#perfCardTitle[metricRole="memory"],
+#detailSectionTitle[metricRole="memory"] { color: #7fe4c1; }
+#perfCardTitle[metricRole="disk"],
+#detailSectionTitle[metricRole="disk"] { color: #ffd078; }
+#perfCardTitle[metricRole="network"],
+#detailSectionTitle[metricRole="network"] { color: #ff95dc; }
 #perfCardTitle[metricRole="gpu"],
-#perfCardTitle[metricRole="temperature"] { color: #ff96b2; }
-#detailSectionTitle { color: #c3e6ff; }
+#detailSectionTitle[metricRole="gpu"],
+#perfCardTitle[metricRole="temperature"],
+#detailSectionTitle[metricRole="temperature"] { color: #ff96b2; }
+#detailSectionTitle {
+    color: #ffffff;
+    font-weight: 700;
+}
 
 #perfCardValue {
     color: #f8fcff;
@@ -513,13 +528,15 @@ QScrollArea#perfScroll {
 }
 
 #perfCardSubtitle {
-    color: #e4eef5;
+    color: #ffffff;
     font-size: 12px;
+    font-weight: 600;
 }
 
 #perfGraphCaption {
-    color: #dce9f3;
+    color: #ffffff;
     font-size: 11px;
+    font-weight: 600;
     padding-top: 2px;
 }
 
@@ -767,9 +784,10 @@ QMenu::separator {
 }
 
 #statusLabel {
-    color: #edf5fb;
+    color: #ffffff;
     padding-left: 2px;
     font-size: 13px;
+    font-weight: 600;
 }
 
 QLabel {
@@ -783,8 +801,9 @@ QStatusBar {
 }
 
 #statusBarLabel {
-    color: #ecf4fb;
+    color: #ffffff;
     padding: 3px 6px;
+    font-weight: 600;
 }
 
 #adminStatusBadge {

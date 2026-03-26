@@ -638,7 +638,11 @@ class DetailsTab(QWidget):
 
     def _set_column_visible(self, column, visible):
         self.tree.setColumnHidden(column, not visible)
+        if visible:
+            width = max(self.tree.header().sectionSize(column), self._default_column_widths().get(column, 110))
+            self.tree.header().resizeSection(column, width)
         self.settings.setValue(f"details/column_hidden_{column}", not visible)
+        self._save_header_state()
 
     def _restore_column_visibility(self):
         for column in range(1, len(self._column_labels)):
@@ -671,7 +675,12 @@ class DetailsTab(QWidget):
         if state and self.tree.header().restoreState(state):
             return
         header = self.tree.header()
-        default_widths = {
+        default_widths = self._default_column_widths()
+        for column, width in default_widths.items():
+            header.resizeSection(column, width)
+
+    def _default_column_widths(self):
+        return {
             0: 280,
             1: 90,
             2: 145,
@@ -681,8 +690,6 @@ class DetailsTab(QWidget):
             6: 120,
             7: 110,
         }
-        for column, width in default_widths.items():
-            header.resizeSection(column, width)
 
     def _emit_page_status(self, visible_entries):
         if not visible_entries:

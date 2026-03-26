@@ -336,6 +336,9 @@ QToolTip {
 #processTree::item {
     padding: 10px 8px;
     border-radius: 10px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Text", "Segoe UI";
+    font-size: 14px;
+    font-weight: 700;
 }
 
 #processTree[compactMode="true"]::item {
@@ -393,8 +396,9 @@ QSplitter::handle:hover {
 
 #sidePanelTitle {
     color: #f7fbff;
-    font-size: 22px;
+    font-size: 24px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-weight: 900;
 }
 
 #protectedBadge {
@@ -410,8 +414,8 @@ QSplitter::handle:hover {
 
 #sidePanelSubtitle {
     color: #ffffff;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 800;
 }
 
 #sideKey,

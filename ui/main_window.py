@@ -4,7 +4,19 @@ import time
 
 import psutil
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QSettings, Qt, QTimer
-from PySide6.QtGui import QActionGroup, QColor, QCloseEvent, QCursor, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QActionGroup,
+    QColor,
+    QCloseEvent,
+    QCursor,
+    QIcon,
+    QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPen,
+    QPixmap,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QListWidget, QListWidgetItem, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter, QSplitterHandle, QMenu,
@@ -116,6 +128,8 @@ class MainWindow(QMainWindow):
         self._add_sidebar_item("Details", QStyle.StandardPixmap.SP_FileDialogDetailedView)
         self._add_sidebar_item("Performance", QStyle.StandardPixmap.SP_DesktopIcon)
         self._add_sidebar_item("Services", QStyle.StandardPixmap.SP_FileDialogListView)
+        self.sidebar.setIconSize(QSize(18, 18))
+        self.sidebar.setSpacing(3)
         self.sidebar.setMinimumWidth(120)
         self.sidebar.setMaximumWidth(320)
 
@@ -130,9 +144,9 @@ class MainWindow(QMainWindow):
         content_layout.setSpacing(10)
         self.content_panel.setLayout(content_layout)
 
-        self.header_title = QLabel("Control Center")
+        self.header_title = QLabel("Processes")
         self.header_title.setObjectName("headerTitle")
-        self.header_subtitle = QLabel("Live process control with protected app handling.")
+        self.header_subtitle = QLabel("Live process control with protected app handling")
         self.header_subtitle.setObjectName("headerSubtitle")
 
         # Search bar
@@ -288,8 +302,8 @@ class MainWindow(QMainWindow):
     def update_page_context(self, index):
         if index == 1:
             self._ensure_details_tab()
-            self.header_title.setText("Process Details")
-            self.header_subtitle.setText("Per-process view with file actions and direct PID handling.")
+            self.header_title.setText("Details")
+            self.header_subtitle.setText("Per-process view with file actions and direct PID handling")
             self.search.show()
             self.columns_button.show()
             self.details_tab.set_filter_text(self.search.text())
@@ -301,8 +315,8 @@ class MainWindow(QMainWindow):
             return
 
         if index == 2:
-            self.header_title.setText("Performance Lab")
-            self.header_subtitle.setText("Live hardware and system throughput monitoring.")
+            self.header_title.setText("Performance")
+            self.header_subtitle.setText("Live hardware and system throughput monitoring")
             self.search.hide()
             self.columns_button.hide()
             self.processes_tab.set_active(False)
@@ -315,7 +329,7 @@ class MainWindow(QMainWindow):
 
         if index == 3:
             self.header_title.setText("Services")
-            self.header_subtitle.setText("Live Windows service inventory with startup and status details.")
+            self.header_subtitle.setText("Live Windows service inventory with startup and status details")
             self.search.show()
             self.columns_button.show()
             self.services_tab.set_filter_text(self.search.text())
@@ -327,8 +341,8 @@ class MainWindow(QMainWindow):
             self._update_status_bar("Services")
             return
 
-        self.header_title.setText("Control Center")
-        self.header_subtitle.setText("Live process control with protected app handling.")
+        self.header_title.setText("Processes")
+        self.header_subtitle.setText("Live process control with protected app handling")
         self.search.show()
         self.columns_button.show()
         self.processes_tab.set_filter_text(self.search.text())
@@ -556,8 +570,66 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
 
     def _add_sidebar_item(self, label, icon_kind):
-        item = QListWidgetItem(self.style().standardIcon(icon_kind), label)
+        item = QListWidgetItem(self._create_sidebar_icon(label), label)
         self.sidebar.addItem(item)
+
+    def _create_sidebar_icon(self, label):
+        accent = self._sidebar_accent_for_label(label)
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        gradient = QLinearGradient(2, 2, 18, 18)
+        lighter = QColor(accent)
+        lighter = lighter.lighter(118)
+        gradient.setColorAt(0.0, lighter)
+        gradient.setColorAt(1.0, accent)
+        painter.setBrush(gradient)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(2, 2, 16, 16, 5, 5)
+
+        white_pen = QPen(QColor("#fdfefe"))
+        white_pen.setWidth(2)
+        white_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(white_pen)
+
+        if label == "Processes":
+            painter.drawRoundedRect(5, 6, 10, 6, 1.5, 1.5)
+            painter.drawLine(7, 14, 10, 14)
+            painter.drawLine(6, 15, 6, 16)
+            painter.drawLine(14, 14, 11, 14)
+            painter.drawLine(15, 15, 15, 16)
+        elif label == "Details":
+            painter.drawRoundedRect(6, 4, 8, 11, 1.2, 1.2)
+            painter.drawLine(8, 8, 12, 8)
+            painter.drawLine(8, 10, 12, 10)
+            painter.drawLine(8, 12, 11, 12)
+        elif label == "Performance":
+            painter.drawLine(5, 13, 8, 10)
+            painter.drawLine(8, 10, 10, 11)
+            painter.drawLine(10, 11, 13, 7)
+            painter.drawLine(13, 7, 15, 8)
+        elif label == "Services":
+            painter.drawRoundedRect(5, 5, 4, 4, 1, 1)
+            painter.drawRoundedRect(11, 5, 4, 4, 1, 1)
+            painter.drawRoundedRect(5, 11, 4, 4, 1, 1)
+            painter.drawRoundedRect(11, 11, 4, 4, 1, 1)
+        else:
+            painter.drawLine(5, 10, 15, 10)
+
+        painter.end()
+        return QIcon(pixmap)
+
+    def _sidebar_accent_for_label(self, label):
+        accents = {
+            "Processes": QColor("#52d5ff"),
+            "Details": QColor("#82f2d2"),
+            "Performance": QColor("#59b8ff"),
+            "Services": QColor("#ff9f6a"),
+        }
+        return accents.get(label, QColor("#7fd6ff"))
 
     def _handle_title_bar_event(self, _watched, event):
         if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:

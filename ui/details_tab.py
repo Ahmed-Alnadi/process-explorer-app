@@ -101,12 +101,16 @@ class DetailsTab(QWidget):
         summary_layout.setSpacing(10)
         self.cpu_summary_label = QLabel("CPU: 0.0%")
         self.cpu_summary_label.setObjectName("metricCard")
+        self.cpu_summary_label.setProperty("metricRole", "cpu")
         self.memory_summary_label = QLabel("Physical Memory: 0.0%")
         self.memory_summary_label.setObjectName("metricCard")
+        self.memory_summary_label.setProperty("metricRole", "memory")
         self.disk_summary_label = QLabel("Disk Active Time: 0.0%")
         self.disk_summary_label.setObjectName("metricCard")
+        self.disk_summary_label.setProperty("metricRole", "disk")
         self.gpu_summary_label = QLabel("GPU Temp: N/A")
         self.gpu_summary_label.setObjectName("metricCard")
+        self.gpu_summary_label.setProperty("metricRole", "temperature")
         self.last_updated_label = QLabel("Details updated: --")
         self.last_updated_label.setObjectName("statusLabel")
         summary_layout.addWidget(self.cpu_summary_label)
@@ -131,6 +135,8 @@ class DetailsTab(QWidget):
         self.tree.setItemsExpandable(False)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
@@ -221,12 +227,19 @@ class DetailsTab(QWidget):
         self._pending_focus_pid = None
         self._low_overhead_mode = False
         self._compact_mode = False
+        self._live_sort_columns = {5, 6, 7}
+        self._sort_debounce_ms = 1100
+        self._full_refresh_counter = 0
+        self._brush_refresh_every = 3
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
         self._resume_timer.timeout.connect(self._resume_refresh)
         self._icon_refresh_timer = QTimer(self)
         self._icon_refresh_timer.setSingleShot(True)
         self._icon_refresh_timer.timeout.connect(self._refresh_visible_icons)
+        self._sort_refresh_timer = QTimer(self)
+        self._sort_refresh_timer.setSingleShot(True)
+        self._sort_refresh_timer.timeout.connect(lambda: self._sync_view(force_sort=True, force_brush=True))
 
         self.model = FlatEntryTableModel(
             headers=self._column_labels,
@@ -282,6 +295,7 @@ class DetailsTab(QWidget):
         self.tree.selectionModel().selectionChanged.connect(lambda *_: self.on_select())
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sectionPressed.connect(self._on_header_pressed)
+        self.tree.header().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
         self.tree.header().sectionResized.connect(self._save_header_state)
         self.tree.header().sectionMoved.connect(self._save_header_state)
@@ -310,14 +324,16 @@ class DetailsTab(QWidget):
         self._apply_summary(summary, full_refresh, updated_at)
         if full_refresh:
             self.latest_details = details or []
+            self._full_refresh_counter += 1
             self._update_entry_histories(self.latest_details)
         self._sync_view()
 
-    def _sync_view(self):
+    def _sync_view(self, force_sort=False, force_brush=False):
         selected_entry_id = self._selected_entry_id()
         vertical_scroll = self.tree.verticalScrollBar().value()
         horizontal_scroll = self.tree.horizontalScrollBar().value()
         self._visible_entries_cache = []
+        refresh_brushes = force_brush or (self._full_refresh_counter % self._brush_refresh_every == 0)
 
         self.tree.setUpdatesEnabled(False)
         try:
@@ -325,9 +341,11 @@ class DetailsTab(QWidget):
             self.model.sync_entries(
                 self.latest_details,
                 priority_ids=priority_ids,
-                batch_size=max(len(priority_ids) + 24, 96),
+                batch_size=max(len(priority_ids) + 56, 220),
+                refresh_brushes=refresh_brushes,
             )
             self.proxy_model.set_filter_text(self.filter_text)
+            self._apply_or_schedule_sort(force_sort=force_sort or bool(self.filter_text))
             self._restore_selection(selected_entry_id)
         finally:
             self.tree.setUpdatesEnabled(True)
@@ -401,7 +419,7 @@ class DetailsTab(QWidget):
 
     def set_filter_text(self, text):
         self.filter_text = text.strip().lower()
-        self._sync_view()
+        self._sync_view(force_sort=True, force_brush=True)
 
     def clear_selection(self):
         self.tree.selectionModel().clearSelection()
@@ -424,7 +442,7 @@ class DetailsTab(QWidget):
         self._resume_timer.stop()
         self.timer.stop()
 
-    def pause_refresh_temporarily(self, duration_ms=450):
+    def pause_refresh_temporarily(self, duration_ms=220):
         if not self._active or self._runtime_paused:
             return
         self.timer.stop()
@@ -436,13 +454,14 @@ class DetailsTab(QWidget):
         self.timer.stop()
         self._resume_timer.stop()
 
-    def resume_after_menu_close(self, delay_ms=250):
+    def resume_after_menu_close(self, delay_ms=120):
         if not self._active or self._runtime_paused:
             return
         self._resume_timer.start(delay_ms)
 
     def shutdown(self):
         self._icon_refresh_timer.stop()
+        self._sort_refresh_timer.stop()
         self._resume_timer.stop()
         self.timer.stop()
         if self.refresh_thread.isRunning():
@@ -866,7 +885,7 @@ class DetailsTab(QWidget):
             label.setText(value)
 
     def _on_header_pressed(self, _section):
-        self.pause_refresh_temporarily(1100)
+        self.pause_refresh_temporarily(260)
 
     def _exec_menu_with_refresh_pause(self, menu, global_pos):
         self.pause_for_menu_open()
@@ -1030,7 +1049,8 @@ class DetailsTab(QWidget):
             return ids
         step = max(self.tree.sizeHintForRow(0), 24)
         x = max(12, min(self.tree.viewport().width() // 3, 80))
-        for y in range(0, self.tree.viewport().height(), step):
+        preload_margin = step * 3
+        for y in range(-preload_margin, self.tree.viewport().height() + preload_margin, step):
             index = self.tree.indexAt(QPoint(x, y))
             if index.isValid():
                 entry_id = index.data(ENTRY_ID_ROLE)
@@ -1045,10 +1065,11 @@ class DetailsTab(QWidget):
 
     def _schedule_visible_row_refresh(self, *_args):
         if not self._icon_refresh_timer.isActive():
-            self._icon_refresh_timer.start(0)
+            self._icon_refresh_timer.start(80)
 
     def _refresh_visible_icons(self):
         self._visible_entry_ids = self._compute_visible_entry_ids()
+        refreshed = 0
         for entry_id in self._visible_entry_ids:
             source_index = self.model.index_for_entry_id(entry_id)
             if not source_index.isValid():
@@ -1062,6 +1083,24 @@ class DetailsTab(QWidget):
             proxy_index = self.proxy_model.mapFromSource(source_index)
             if proxy_index.isValid():
                 self.proxy_model.dataChanged.emit(proxy_index, proxy_index, [Qt.ItemDataRole.DecorationRole])
+                refreshed += 1
+                if refreshed >= 6:
+                    self._icon_refresh_timer.start(45)
+                    break
+
+    def _apply_or_schedule_sort(self, force_sort=False):
+        column = self.tree.header().sortIndicatorSection()
+        order = self.tree.header().sortIndicatorOrder()
+        if column in self._live_sort_columns and not force_sort:
+            if not self._sort_refresh_timer.isActive():
+                self._sort_refresh_timer.start(self._sort_debounce_ms)
+            return
+        self._sort_refresh_timer.stop()
+        self.proxy_model.sort(column, order)
+
+    def _on_sort_indicator_changed(self, section, order):
+        self.proxy_model.sort(section, order)
+        self._apply_or_schedule_sort(force_sort=True)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.MouseButtonPress:

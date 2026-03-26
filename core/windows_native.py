@@ -423,6 +423,84 @@ class NativeGpuUsageMonitor:
             return None
 
 
+class NativeCpuUsageMonitor:
+    def __init__(self):
+        self._pdh = None
+        self._query = wintypes.HANDLE()
+        self._counter = wintypes.HANDLE()
+        self._ready = False
+        self._initialize()
+
+    def _initialize(self):
+        try:
+            self._pdh = ctypes.WinDLL("pdh", use_last_error=True)
+        except Exception:
+            return
+
+        self._pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+        self._pdh.PdhOpenQueryW.restype = wintypes.DWORD
+        self._pdh.PdhAddEnglishCounterW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        self._pdh.PdhAddEnglishCounterW.restype = wintypes.DWORD
+        self._pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCollectQueryData.restype = wintypes.DWORD
+        self._pdh.PdhGetFormattedCounterValue.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(PDH_FMT_COUNTERVALUE),
+        ]
+        self._pdh.PdhGetFormattedCounterValue.restype = wintypes.DWORD
+        self._pdh.PdhCloseQuery.argtypes = [wintypes.HANDLE]
+        self._pdh.PdhCloseQuery.restype = wintypes.DWORD
+
+        if self._pdh.PdhOpenQueryW(None, None, ctypes.byref(self._query)) != 0:
+            return
+
+        for path in (
+            "\\Processor Information(_Total)\\% Processor Utility",
+            "\\Processor(_Total)\\% Processor Time",
+        ):
+            if self._pdh.PdhAddEnglishCounterW(self._query, path, None, ctypes.byref(self._counter)) == 0:
+                self._pdh.PdhCollectQueryData(self._query)
+                self._ready = True
+                return
+
+        self._pdh.PdhCloseQuery(self._query)
+        self._query = wintypes.HANDLE()
+
+    def close(self):
+        if self._pdh is not None and self._query:
+            try:
+                self._pdh.PdhCloseQuery(self._query)
+            except Exception:
+                pass
+        self._ready = False
+
+    def read_percent(self):
+        if not self._ready:
+            return None
+        try:
+            if self._pdh.PdhCollectQueryData(self._query) != 0:
+                return None
+            counter_type = wintypes.DWORD(0)
+            value = PDH_FMT_COUNTERVALUE()
+            if self._pdh.PdhGetFormattedCounterValue(
+                self._counter,
+                PDH_FMT_DOUBLE,
+                ctypes.byref(counter_type),
+                ctypes.byref(value),
+            ) != 0:
+                return None
+            return max(0.0, min(float(value.unionValue.doubleValue), 100.0))
+        except Exception:
+            return None
+
+
 class NativeDiskActivityMonitor:
     def __init__(self):
         self._pdh = None

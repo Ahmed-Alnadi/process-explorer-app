@@ -55,15 +55,30 @@ class ProcessTreeModel(QAbstractItemModel):
         self._sort_column = 5
         self._sort_order = Qt.SortOrder.DescendingOrder
         self._tabular_font = self._build_tabular_font()
+        self._live_sort_columns = {5, 6, 7}
 
-    def set_groups(self, groups, expanded_group_keys=None, load_all_children=False):
+    def set_groups(
+        self,
+        groups,
+        expanded_group_keys=None,
+        load_all_children=False,
+        preserve_existing_order=False,
+        refresh_brushes=False,
+        changed_group_ids=None,
+        changed_child_ids_by_group=None,
+    ):
         expanded_group_keys = expanded_group_keys or set()
-        ordered_groups = self._sorted_entries(groups, "group")
+        changed_group_ids = set(changed_group_ids or set())
+        changed_child_ids_by_group = changed_child_ids_by_group or {}
+        ordered_groups = self._ordered_entries(groups, "group", preserve_existing_order)
         self._sync_nodes(
             parent_node=self._root,
             incoming_entries=ordered_groups,
             parent_index=QModelIndex(),
             kind="group",
+            preserve_existing_order=preserve_existing_order,
+            refresh_brushes=refresh_brushes,
+            changed_entry_ids=changed_group_ids,
         )
 
         for group in ordered_groups:
@@ -82,9 +97,17 @@ class ProcessTreeModel(QAbstractItemModel):
             group_node.children_loaded = True
             self._sync_nodes(
                 parent_node=group_node,
-                incoming_entries=self._sorted_entries(group["children"], "child"),
+                incoming_entries=self._ordered_entries(
+                    group["children"],
+                    "child",
+                    preserve_existing_order,
+                    existing_children=group_node.children,
+                ),
                 parent_index=self.index_for_entry_id(group["id"]),
                 kind="child",
+                preserve_existing_order=preserve_existing_order,
+                refresh_brushes=refresh_brushes,
+                changed_entry_ids=changed_child_ids_by_group.get(group["id"], set()),
             )
 
     def ensure_group_children_loaded(self, group_id):
@@ -99,6 +122,9 @@ class ProcessTreeModel(QAbstractItemModel):
             incoming_entries=self._sorted_entries(group_node.entry["children"], "child"),
             parent_index=parent_index,
             kind="child",
+            preserve_existing_order=False,
+            refresh_brushes=True,
+            changed_entry_ids=None,
         )
 
     def unload_group_children(self, group_id):
@@ -222,9 +248,19 @@ class ProcessTreeModel(QAbstractItemModel):
             return index.internalPointer()
         return self._root
 
-    def _sync_nodes(self, parent_node, incoming_entries, parent_index, kind):
+    def _sync_nodes(
+        self,
+        parent_node,
+        incoming_entries,
+        parent_index,
+        kind,
+        preserve_existing_order=False,
+        refresh_brushes=False,
+        changed_entry_ids=None,
+    ):
         incoming_entries = list(incoming_entries)
         incoming_by_id = {entry["id"]: entry for entry in incoming_entries}
+        changed_entry_ids = None if changed_entry_ids is None else set(changed_entry_ids)
 
         for row in range(len(parent_node.children) - 1, -1, -1):
             child_node = parent_node.children[row]
@@ -240,12 +276,18 @@ class ProcessTreeModel(QAbstractItemModel):
             updated_entry = incoming_by_id.get(child_node.entry["id"])
             if updated_entry is None:
                 continue
-            if child_node.entry != updated_entry:
+            if changed_entry_ids is not None and child_node.entry["id"] not in changed_entry_ids:
                 child_node.entry = updated_entry
-                self.dataChanged.emit(
-                    self.index(row, 0, parent_index),
-                    self.index(row, len(self._headers) - 1, parent_index),
+                continue
+            if child_node.entry != updated_entry:
+                changed_columns = self._changed_columns(
+                    child_node.entry,
+                    updated_entry,
+                    child_node.kind,
+                    refresh_brushes,
                 )
+                child_node.entry = updated_entry
+                self._emit_columns_changed(parent_index, row, changed_columns, refresh_brushes)
 
         new_entries = [entry for entry in incoming_entries if entry["id"] not in existing_ids]
         if new_entries:
@@ -279,6 +321,19 @@ class ProcessTreeModel(QAbstractItemModel):
             key=lambda entry: self._sort_value(entry, kind, self._sort_column),
             reverse=reverse,
         )
+
+    def _ordered_entries(self, entries, kind, preserve_existing_order, existing_children=None):
+        if not preserve_existing_order:
+            return self._sorted_entries(entries, kind)
+        existing_children = existing_children if existing_children is not None else self._root.children
+        existing_order = {child.entry["id"]: index for index, child in enumerate(existing_children)}
+        new_entries = [entry for entry in entries if entry["id"] not in existing_order]
+        ordered_new_entries = self._sorted_entries(new_entries, kind)
+        preserved_entries = sorted(
+            (entry for entry in entries if entry["id"] in existing_order),
+            key=lambda entry: existing_order[entry["id"]],
+        )
+        return [*preserved_entries, *ordered_new_entries]
 
     def _sort_children(self, parent_node):
         reverse = self._sort_order == Qt.SortOrder.DescendingOrder
@@ -399,3 +454,38 @@ class ProcessTreeModel(QAbstractItemModel):
             disk_value = entry["disk_mb_per_sec"] if kind == "group" else entry["disk_rate_mb_per_sec"]
             return resource_heat_brush(disk_intensity_from_rate(disk_value))
         return None
+
+    def _changed_columns(self, old_entry, new_entry, kind, refresh_brushes):
+        changed = []
+        for column in range(len(self._headers)):
+            if self._display_value(old_entry, kind, column) != self._display_value(new_entry, kind, column):
+                changed.append(column)
+                continue
+            if self._sort_value(old_entry, kind, column) != self._sort_value(new_entry, kind, column):
+                changed.append(column)
+                continue
+            if self._tooltip_value(old_entry, column) != self._tooltip_value(new_entry, column):
+                changed.append(column)
+                continue
+            if column == 6 and old_entry.get("memory_value_display") != new_entry.get("memory_value_display"):
+                changed.append(column)
+                continue
+            if refresh_brushes and self._background_brush(old_entry, kind, column) != self._background_brush(new_entry, kind, column):
+                changed.append(column)
+        return changed
+
+    def _emit_columns_changed(self, parent_index, row, columns, refresh_brushes):
+        if not columns:
+            return
+        roles = [
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+            self._roles["sort"],
+            self._roles["secondary"],
+        ]
+        if refresh_brushes:
+            roles.append(Qt.ItemDataRole.BackgroundRole)
+        for column in columns:
+            index = self.index(row, column, parent_index)
+            if index.isValid():
+                self.dataChanged.emit(index, index, roles)

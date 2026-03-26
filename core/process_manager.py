@@ -19,6 +19,7 @@ from core.service_links import ServiceLinkResolver
 from core.startup_manager import StartupManager
 from core.subprocess_utils import hidden_subprocess_kwargs
 from core.windows_native import (
+    NativeCpuUsageMonitor,
     NativeDiskActivityMonitor,
     native_memory_status,
     native_process_private_bytes,
@@ -51,6 +52,7 @@ class ProcessManager:
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
         self._last_temperature_update = 0.0
         self._cached_gpu_temp_c = None
+        self._cpu_monitor = NativeCpuUsageMonitor()
         self._disk_monitor = NativeDiskActivityMonitor()
         self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
         self._low_overhead_mode = False
@@ -209,7 +211,9 @@ class ProcessManager:
         return process_entries
 
     def system_summary(self):
-        cpu_percent = psutil.cpu_percent(interval=None)
+        cpu_percent = self._cpu_monitor.read_percent()
+        if cpu_percent is None:
+            cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         native_memory = native_memory_status()
         memory_percent = native_memory["memory_load_percent"] if native_memory else memory.percent

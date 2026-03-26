@@ -3,11 +3,12 @@ import sys
 import time
 
 import psutil
-from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, Qt, QTimer
-from PySide6.QtGui import QActionGroup, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QSettings, Qt, QTimer
+from PySide6.QtGui import QActionGroup, QColor, QCloseEvent, QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QListWidget, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter, QSplitterHandle, QMenu
+    QListWidget, QListWidgetItem, QStackedWidget, QLineEdit, QLabel, QFrame, QPushButton, QSplitter, QSplitterHandle, QMenu,
+    QGraphicsDropShadowEffect, QStyle
 )
 from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.windows_native import native_uptime_seconds
@@ -21,7 +22,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
-        self._base_window_title = "Task Manager Clone"
+        self._base_window_title = "Nadzilla PTM"
         self._is_admin = self._detect_admin_state()
         self._refresh_profile_name = self.settings.value(
             "main/refresh_profile",
@@ -31,9 +32,16 @@ class MainWindow(QMainWindow):
         self._low_overhead_mode = self.settings.value("main/low_overhead_mode", False, type=bool)
         self._compact_mode = self.settings.value("main/compact_mode", False, type=bool)
         self._runtime_paused = False
+        self._drag_active = False
+        self._drag_offset = QPoint()
+        self._resize_margin = 8
+        self._resize_edges = set()
+        self._resize_start_pos = QPoint()
+        self._resize_start_geometry = QRect()
         if self._refresh_profile_name not in REFRESH_PROFILES:
             self._refresh_profile_name = DEFAULT_REFRESH_PROFILE
 
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self._apply_window_title()
         self.resize(1720, 940)
         self.setMinimumSize(1540, 860)
@@ -42,18 +50,72 @@ class MainWindow(QMainWindow):
         main_widget.setObjectName("windowRoot")
         self.setCentralWidget(main_widget)
 
+        self.backdrop_orb_a = QFrame(main_widget)
+        self.backdrop_orb_a.setObjectName("backdropOrbA")
+        self.backdrop_orb_a.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.backdrop_orb_b = QFrame(main_widget)
+        self.backdrop_orb_b.setObjectName("backdropOrbB")
+        self.backdrop_orb_b.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(10, 10, 10, 10)
+        root_layout.setSpacing(10)
+        main_widget.setLayout(root_layout)
+
+        self.title_bar = QFrame()
+        self.title_bar.setObjectName("titleBar")
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(16, 10, 10, 10)
+        title_layout.setSpacing(10)
+        self.title_bar.setLayout(title_layout)
+
+        self.title_badge = QLabel("N")
+        self.title_badge.setObjectName("titleBadge")
+        self.title_badge.setFixedSize(QSize(28, 28))
+
+        title_text_layout = QVBoxLayout()
+        title_text_layout.setContentsMargins(0, 0, 0, 0)
+        title_text_layout.setSpacing(0)
+        self.window_title_label = QLabel(self._base_window_title)
+        self.window_title_label.setObjectName("windowTitleLabel")
+        self.window_status_label = QLabel("Process Task Manager")
+        self.window_status_label.setObjectName("windowStatusLabel")
+        title_text_layout.addWidget(self.window_title_label)
+        title_text_layout.addWidget(self.window_status_label)
+
+        self.minimize_button = QPushButton("-")
+        self.minimize_button.setObjectName("titleBarButton")
+        self.minimize_button.setToolTip("Minimize")
+        self.minimize_button.clicked.connect(self.showMinimized)
+        self.maximize_button = QPushButton("[]")
+        self.maximize_button.setObjectName("titleBarButton")
+        self.maximize_button.setToolTip("Maximize")
+        self.maximize_button.clicked.connect(self._toggle_maximize_restore)
+        self.close_button = QPushButton("X")
+        self.close_button.setObjectName("titleBarCloseButton")
+        self.close_button.setToolTip("Close")
+        self.close_button.clicked.connect(self.close)
+
+        title_layout.addWidget(self.title_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_layout.addLayout(title_text_layout)
+        title_layout.addStretch()
+        title_layout.addWidget(self.minimize_button)
+        title_layout.addWidget(self.maximize_button)
+        title_layout.addWidget(self.close_button)
+        root_layout.addWidget(self.title_bar)
+
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(10)
-        main_widget.setLayout(main_layout)
+        root_layout.addLayout(main_layout, 1)
 
         # Sidebar
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("navSidebar")
-        self.sidebar.addItem("Processes")
-        self.sidebar.addItem("Details")
-        self.sidebar.addItem("Performance")
-        self.sidebar.addItem("Services")
+        self._add_sidebar_item("Processes", QStyle.StandardPixmap.SP_ComputerIcon)
+        self._add_sidebar_item("Details", QStyle.StandardPixmap.SP_FileDialogDetailedView)
+        self._add_sidebar_item("Performance", QStyle.StandardPixmap.SP_DesktopIcon)
+        self._add_sidebar_item("Services", QStyle.StandardPixmap.SP_FileDialogListView)
         self.sidebar.setMinimumWidth(120)
         self.sidebar.setMaximumWidth(320)
 
@@ -171,6 +233,8 @@ class MainWindow(QMainWindow):
         self.header_title.installEventFilter(self)
         self.header_subtitle.installEventFilter(self)
         self.content_panel.installEventFilter(self)
+        for widget in (self.title_bar, self.title_badge, self.window_title_label, self.window_status_label):
+            widget.installEventFilter(self)
         self.main_splitter.splitterMoved.connect(self._save_main_splitter_state)
         self._connect_page_status("Processes", self.processes_tab)
         self._connect_page_status("Services", self.services_tab)
@@ -216,6 +280,9 @@ class MainWindow(QMainWindow):
         self.sidebar.setCurrentRow(int(self.settings.value("main/current_page", 0)))
         self._update_footer_metrics()
         self._update_runtime_pause_state()
+        self._apply_depth_effects()
+        self._position_backdrop_orbs()
+        self._update_title_bar_state()
 
     def update_page_context(self, index):
         if index == 1:
@@ -282,6 +349,8 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def event(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_title_bar_state()
         if event.type() in (
             QEvent.Type.WindowStateChange,
             QEvent.Type.ActivationChange,
@@ -298,8 +367,35 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         self._pause_live_updates()
         super().resizeEvent(event)
+        self._position_backdrop_orbs()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and not self.isMaximized():
+            edges = self._resize_edges_for_pos(event.position().toPoint())
+            if edges:
+                self._resize_edges = edges
+                self._resize_start_pos = event.globalPosition().toPoint()
+                self._resize_start_geometry = self.geometry()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resize_edges and event.buttons() & Qt.MouseButton.LeftButton:
+            self._resize_from_global_pos(event.globalPosition().toPoint())
+            event.accept()
+            return
+        self._update_resize_cursor(event.position().toPoint())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._resize_edges = set()
+        self.unsetCursor()
+        super().mouseReleaseEvent(event)
 
     def eventFilter(self, watched, event):
+        if watched in (self.title_bar, self.title_badge, self.window_title_label, self.window_status_label):
+            return self._handle_title_bar_event(watched, event)
         if event.type() == QEvent.Type.MouseButtonPress:
             if self._preserves_current_selection(watched, event):
                 return super().eventFilter(watched, event)
@@ -361,7 +457,7 @@ class MainWindow(QMainWindow):
         if current_index == 0:
             self.processes_tab.set_filter_text(text)
 
-    def _pause_live_updates(self, duration_ms=500):
+    def _pause_live_updates(self, duration_ms=220):
         widgets = [self.processes_tab, self.performance_tab, self.services_tab]
         if self.details_tab is not None:
             widgets.append(self.details_tab)
@@ -456,6 +552,131 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
 
+    def _add_sidebar_item(self, label, icon_kind):
+        item = QListWidgetItem(self.style().standardIcon(icon_kind), label)
+        self.sidebar.addItem(item)
+
+    def _handle_title_bar_event(self, _watched, event):
+        if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+            self._toggle_maximize_restore()
+            return True
+        if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_active = True
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            return True
+        if event.type() == QEvent.Type.MouseMove and self._drag_active and event.buttons() & Qt.MouseButton.LeftButton:
+            if self.isMaximized():
+                return True
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            return True
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            self._drag_active = False
+            return True
+        return False
+
+    def _toggle_maximize_restore(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._update_title_bar_state()
+
+    def _update_title_bar_state(self):
+        maximized = self.isMaximized()
+        self.maximize_button.setText("O" if maximized else "[]")
+        self.maximize_button.setToolTip("Restore Down" if maximized else "Maximize")
+        status_text = "Process Task Manager"
+        if self._is_admin:
+            status_text = f"{status_text}  |  Administrator"
+        self.window_status_label.setText(status_text)
+
+    def _resize_edges_for_pos(self, pos):
+        rect = self.rect()
+        margin = self._resize_margin
+        if pos.x() < 0 or pos.y() < 0 or pos.x() > rect.width() or pos.y() > rect.height():
+            return set()
+        edges = set()
+        if pos.x() <= margin:
+            edges.add("left")
+        elif pos.x() >= rect.width() - margin:
+            edges.add("right")
+        if pos.y() <= margin:
+            edges.add("top")
+        elif pos.y() >= rect.height() - margin:
+            edges.add("bottom")
+        return edges
+
+    def _update_resize_cursor(self, pos):
+        if self.isMaximized():
+            self.unsetCursor()
+            return
+        edges = self._resize_edges_for_pos(pos)
+        if not edges:
+            self.unsetCursor()
+            return
+        if edges in ({"left", "top"}, {"right", "bottom"}):
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif edges in ({"right", "top"}, {"left", "bottom"}):
+            self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif "left" in edges or "right" in edges:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+
+    def _resize_from_global_pos(self, global_pos):
+        geometry = QRect(self._resize_start_geometry)
+        delta = global_pos - self._resize_start_pos
+        minimum_width = self.minimumWidth()
+        minimum_height = self.minimumHeight()
+
+        if "left" in self._resize_edges:
+            new_left = geometry.left() + delta.x()
+            max_left = geometry.right() - minimum_width
+            geometry.setLeft(min(new_left, max_left))
+        if "right" in self._resize_edges:
+            geometry.setRight(max(geometry.left() + minimum_width, geometry.right() + delta.x()))
+        if "top" in self._resize_edges:
+            new_top = geometry.top() + delta.y()
+            max_top = geometry.bottom() - minimum_height
+            geometry.setTop(min(new_top, max_top))
+        if "bottom" in self._resize_edges:
+            geometry.setBottom(max(geometry.top() + minimum_height, geometry.bottom() + delta.y()))
+
+        self.setGeometry(geometry)
+
+    def _apply_depth_effects(self):
+        for widget, blur_radius, offset_y, alpha in (
+            (self.sidebar, 34, 12, 72),
+            (self.content_panel, 48, 18, 92),
+        ):
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(blur_radius)
+            shadow.setOffset(0, offset_y)
+            shadow.setColor(QColor(3, 8, 16, alpha))
+            widget.setGraphicsEffect(shadow)
+
+    def _position_backdrop_orbs(self):
+        root = self.centralWidget()
+        if root is None:
+            return
+        root_rect = root.rect()
+        orb_a_size = 360
+        orb_b_size = 280
+        self.backdrop_orb_a.setGeometry(
+            root_rect.right() - orb_a_size - 92,
+            34,
+            orb_a_size,
+            orb_a_size,
+        )
+        self.backdrop_orb_b.setGeometry(
+            116,
+            max(root_rect.bottom() - orb_b_size - 150, 40),
+            orb_b_size,
+            orb_b_size,
+        )
+        self.backdrop_orb_a.lower()
+        self.backdrop_orb_b.lower()
+
     def _detect_admin_state(self):
         if sys.platform != "win32":
             return False
@@ -469,11 +690,13 @@ class MainWindow(QMainWindow):
         if self._is_admin:
             title = f"{title} (Administrator)"
         self.setWindowTitle(title)
+        if hasattr(self, "window_title_label"):
+            self.window_title_label.setText(self._base_window_title)
 
     def _build_refresh_menu(self):
         self.refresh_menu = QMenu(self)
         self.refresh_menu.aboutToShow.connect(lambda: self._pause_live_updates(60000))
-        self.refresh_menu.aboutToHide.connect(lambda: self._pause_live_updates(250))
+        self.refresh_menu.aboutToHide.connect(lambda: self._pause_live_updates(120))
         action_group = QActionGroup(self)
         action_group.setExclusive(True)
         for profile_name in REFRESH_PROFILES:

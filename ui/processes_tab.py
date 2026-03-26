@@ -168,9 +168,10 @@ class ProcessRefreshWorker(QObject):
             )
             groups = None
             if full_refresh:
-                self._cached_groups = self._manager.list_processes()
+                latest_groups = self._manager.list_processes()
+                groups = self._build_snapshot_payload(latest_groups)
+                self._cached_groups = latest_groups
                 self._last_full_refresh = current_time
-                groups = self._cached_groups
             self.snapshot_ready.emit(groups, summary, full_refresh, current_time)
         finally:
             self._busy = False
@@ -185,6 +186,43 @@ class ProcessRefreshWorker(QObject):
     def force_refresh(self):
         self._last_full_refresh = 0.0
         self.refresh()
+
+    def _build_snapshot_payload(self, groups):
+        previous_groups = {group["id"]: group for group in self._cached_groups}
+        changed_group_ids = set()
+        changed_child_ids_by_group = {}
+
+        for group in groups:
+            previous_group = previous_groups.get(group["id"])
+            if previous_group is None or self._group_without_children(previous_group) != self._group_without_children(group):
+                changed_group_ids.add(group["id"])
+
+            previous_children = {
+                child["id"]: child for child in previous_group.get("children", [])
+            } if previous_group else {}
+            current_child_ids = [child["id"] for child in group.get("children", [])]
+            previous_child_ids = [child["id"] for child in previous_group.get("children", [])] if previous_group else []
+            changed_child_ids = set()
+            if current_child_ids != previous_child_ids:
+                changed_child_ids.update(current_child_ids)
+            for child in group.get("children", []):
+                if previous_children.get(child["id"]) != child:
+                    changed_child_ids.add(child["id"])
+            if changed_child_ids:
+                changed_child_ids_by_group[group["id"]] = changed_child_ids
+
+        return {
+            "groups": groups,
+            "changed_group_ids": changed_group_ids,
+            "changed_child_ids_by_group": changed_child_ids_by_group,
+        }
+
+    def _group_without_children(self, group):
+        return {
+            key: value
+            for key, value in group.items()
+            if key != "children"
+        }
 
 
 class MiniSparkline(QWidget):
@@ -442,12 +480,16 @@ class ProcessesTab(QWidget):
         summary_layout.setSpacing(10)
         self.cpu_summary_label = QLabel("CPU: 0.0%")
         self.cpu_summary_label.setObjectName("metricCard")
+        self.cpu_summary_label.setProperty("metricRole", "cpu")
         self.memory_summary_label = QLabel("Physical Memory: 0.0%")
         self.memory_summary_label.setObjectName("metricCard")
+        self.memory_summary_label.setProperty("metricRole", "memory")
         self.disk_summary_label = QLabel("Disk Active Time: 0.0%")
         self.disk_summary_label.setObjectName("metricCard")
+        self.disk_summary_label.setProperty("metricRole", "disk")
         self.gpu_summary_label = QLabel("GPU Temp: N/A")
         self.gpu_summary_label.setObjectName("metricCard")
+        self.gpu_summary_label.setProperty("metricRole", "temperature")
         self.last_updated_label = QLabel("List updated: --")
         self.last_updated_label.setObjectName("statusLabel")
         summary_layout.addWidget(self.cpu_summary_label)
@@ -482,6 +524,8 @@ class ProcessesTab(QWidget):
         self.tree.setModel(self.model)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.tree.setRootIsDecorated(True)
         self.tree.setItemsExpandable(True)
         self.tree.setAllColumnsShowFocus(True)
@@ -559,6 +603,10 @@ class ProcessesTab(QWidget):
         self.filter_text = ""
         self.current_groups = []
         self.latest_groups = []
+        self._latest_group_hints = {
+            "changed_group_ids": set(),
+            "changed_child_ids_by_group": {},
+        }
         self.latest_summary = {
             "cpu_display": "CPU: 0.0%",
             "memory_display": "Physical Memory: 0.0%",
@@ -590,12 +638,19 @@ class ProcessesTab(QWidget):
         self._low_overhead_mode = False
         self._compact_mode = False
         self._timer_interval_ms = REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE]["processes_timer_ms"]
+        self._live_sort_columns = {5, 6, 7}
+        self._sort_debounce_ms = 1100
+        self._full_refresh_counter = 0
+        self._brush_refresh_every = 3
         self._resume_timer = QTimer(self)
         self._resume_timer.setSingleShot(True)
         self._resume_timer.timeout.connect(self._resume_refresh)
         self._icon_refresh_timer = QTimer(self)
         self._icon_refresh_timer.setSingleShot(True)
         self._icon_refresh_timer.timeout.connect(self._refresh_visible_icons)
+        self._sort_refresh_timer = QTimer(self)
+        self._sort_refresh_timer.setSingleShot(True)
+        self._sort_refresh_timer.timeout.connect(lambda: self._rebuild_tree(force_sort=True, force_brush=True))
 
         self.refresh_thread = QThread(self)
         self.refresh_worker = ProcessRefreshWorker()
@@ -619,6 +674,7 @@ class ProcessesTab(QWidget):
         self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.header().sectionPressed.connect(self._on_header_pressed)
+        self.tree.header().sortIndicatorChanged.connect(self._on_sort_indicator_changed)
         self.tree.header().sortIndicatorChanged.connect(self._save_sort_settings)
         self.tree.header().sectionResized.connect(self._save_header_state)
         self.tree.header().sectionMoved.connect(self._save_header_state)
@@ -656,11 +712,17 @@ class ProcessesTab(QWidget):
         if not full_refresh:
             return
 
-        self.latest_groups = groups or []
+        payload = groups or {}
+        self.latest_groups = payload.get("groups", [])
+        self._latest_group_hints = {
+            "changed_group_ids": set(payload.get("changed_group_ids", set())),
+            "changed_child_ids_by_group": dict(payload.get("changed_child_ids_by_group", {})),
+        }
+        self._full_refresh_counter += 1
         self._update_entry_histories(self.latest_groups)
         self._rebuild_tree()
 
-    def _rebuild_tree(self):
+    def _rebuild_tree(self, force_sort=False, force_brush=False):
         selected_entry_id = self._selected_entry_id()
         expanded_keys = self._expanded_group_keys()
         vertical_scroll = self.tree.verticalScrollBar().value()
@@ -669,12 +731,21 @@ class ProcessesTab(QWidget):
         load_children_keys = set(expanded_keys)
         if self.filter_text:
             load_children_keys.update(group["group_key"] for group in self.current_groups)
+        sort_column = self.tree.header().sortIndicatorSection()
+        preserve_existing_order = (
+            sort_column in self._live_sort_columns and not self.filter_text and not force_sort
+        )
+        refresh_brushes = force_brush or (self._full_refresh_counter % self._brush_refresh_every == 0)
         self.tree.setUpdatesEnabled(False)
         try:
             self.model.set_groups(
                 self.current_groups,
                 expanded_group_keys=load_children_keys,
                 load_all_children=bool(self.filter_text),
+                preserve_existing_order=preserve_existing_order,
+                refresh_brushes=refresh_brushes,
+                changed_group_ids=self._latest_group_hints.get("changed_group_ids", set()),
+                changed_child_ids_by_group=self._latest_group_hints.get("changed_child_ids_by_group", {}),
             )
             self._apply_expansion_state(expanded_keys)
             self._restore_selection(selected_entry_id)
@@ -686,6 +757,10 @@ class ProcessesTab(QWidget):
         self._update_notice_state(self.current_groups)
         self._emit_page_status()
         self._schedule_visible_row_refresh()
+        if preserve_existing_order:
+            self._sort_refresh_timer.start(self._sort_debounce_ms)
+        else:
+            self._sort_refresh_timer.stop()
 
     def on_select(self):
         entry = self._selected_entry()
@@ -719,7 +794,7 @@ class ProcessesTab(QWidget):
 
     def set_filter_text(self, text):
         self.filter_text = text.strip().lower()
-        self._rebuild_tree()
+        self._rebuild_tree(force_sort=True, force_brush=True)
 
     def clear_selection(self):
         self.tree.selectionModel().clearSelection()
@@ -743,7 +818,7 @@ class ProcessesTab(QWidget):
         self._resume_timer.stop()
         self.timer.stop()
 
-    def pause_refresh_temporarily(self, duration_ms=450):
+    def pause_refresh_temporarily(self, duration_ms=220):
         if not self._active or self._runtime_paused:
             return
         self.timer.stop()
@@ -751,6 +826,7 @@ class ProcessesTab(QWidget):
 
     def shutdown(self):
         self._icon_refresh_timer.stop()
+        self._sort_refresh_timer.stop()
         self._resume_timer.stop()
         self.timer.stop()
         if self.refresh_thread.isRunning():
@@ -805,13 +881,13 @@ class ProcessesTab(QWidget):
             self.end_task()
 
     def expand_all_groups(self):
-        self.pause_refresh_temporarily(1200)
+        self.pause_refresh_temporarily(420)
         for group in self.current_groups:
             self.model.ensure_group_children_loaded(group["id"])
         self.tree.expandAll()
 
     def collapse_all_groups(self):
-        self.pause_refresh_temporarily(900)
+        self.pause_refresh_temporarily(260)
         self.tree.collapseAll()
 
     def footer_counts(self):
@@ -833,7 +909,7 @@ class ProcessesTab(QWidget):
         self.timer.stop()
         self._resume_timer.stop()
 
-    def resume_after_menu_close(self, delay_ms=250):
+    def resume_after_menu_close(self, delay_ms=120):
         if not self._active:
             return
         self._resume_timer.start(delay_ms)
@@ -1068,7 +1144,8 @@ class ProcessesTab(QWidget):
             return ids
         step = max(self.tree.sizeHintForRow(0), 24)
         x = max(12, min(self.tree.viewport().width() // 3, 80))
-        for y in range(0, self.tree.viewport().height(), step):
+        preload_margin = step * 3
+        for y in range(-preload_margin, self.tree.viewport().height() + preload_margin, step):
             index = self.tree.indexAt(QPoint(x, y))
             if index.isValid():
                 entry_id = index.data(ENTRY_ID_ROLE)
@@ -1083,10 +1160,11 @@ class ProcessesTab(QWidget):
 
     def _schedule_visible_row_refresh(self, *_args):
         if not self._icon_refresh_timer.isActive():
-            self._icon_refresh_timer.start(0)
+            self._icon_refresh_timer.start(80)
 
     def _refresh_visible_icons(self):
         self._visible_entry_ids = self._compute_visible_entry_ids()
+        refreshed = 0
         for entry_id in self._visible_entry_ids:
             index = self.model.index_for_entry_id(entry_id)
             if not index.isValid():
@@ -1098,6 +1176,10 @@ class ProcessesTab(QWidget):
                 continue
             self._icon_for_entry(entry)
             self.model.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
+            refreshed += 1
+            if refreshed >= 6:
+                self._icon_refresh_timer.start(45)
+                break
 
     def _set_sort_values(self, item, values):
         for column, value in values.items():
@@ -1194,7 +1276,7 @@ class ProcessesTab(QWidget):
         return self.last_updated_label.text()
 
     def _on_item_expanded(self, index):
-        self.pause_refresh_temporarily(1100)
+        self.pause_refresh_temporarily(320)
         if index.data(ENTRY_KIND_ROLE) != "group":
             return
         group = index.data(ENTRY_ROLE)
@@ -1203,7 +1285,7 @@ class ProcessesTab(QWidget):
         self.model.ensure_group_children_loaded(group["id"])
 
     def _on_tree_collapsed(self, _index):
-        self.pause_refresh_temporarily(900)
+        self.pause_refresh_temporarily(240)
         group = _index.data(ENTRY_ROLE)
         if group and _index.data(ENTRY_KIND_ROLE) == "group":
             self.model.unload_group_children(group["id"])
@@ -1211,7 +1293,7 @@ class ProcessesTab(QWidget):
     def _on_tree_pressed(self, index):
         if not index.isValid():
             return
-        self.pause_refresh_temporarily(1100)
+        self.pause_refresh_temporarily(320)
         if index.column() != 0 or index.data(ENTRY_KIND_ROLE) != "group":
             return
 
@@ -1221,7 +1303,12 @@ class ProcessesTab(QWidget):
         self.model.ensure_group_children_loaded(group["id"])
 
     def _on_header_pressed(self, _section):
-        self.pause_refresh_temporarily(1100)
+        self.pause_refresh_temporarily(260)
+
+    def _on_sort_indicator_changed(self, section, order):
+        self.model.sort(section, order)
+        self._sort_refresh_timer.stop()
+        self._rebuild_tree(force_sort=True, force_brush=True)
 
     def _exec_menu_with_refresh_pause(self, menu, global_pos):
         self.pause_for_menu_open()

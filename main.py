@@ -13,7 +13,7 @@ def set_app_user_model_id():
 
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "Nadzilla.TaskManagerClone"
+            "Nadzilla.PTM"
         )
     except Exception:
         pass

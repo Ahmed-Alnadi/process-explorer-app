@@ -10,13 +10,16 @@ from PySide6.QtCore import QPointF, Qt, QTimer, QSettings
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QProgressBar,
     QScrollArea,
     QStackedWidget,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +27,7 @@ from PySide6.QtWidgets import (
 from core.refresh_profiles import DEFAULT_REFRESH_PROFILE, REFRESH_PROFILES
 from core.subprocess_utils import hidden_subprocess_kwargs
 from core.windows_native import (
+    NativeCpuUsageMonitor,
     NativeDiskActivityMonitor,
     NativeGpuUsageMonitor,
     native_memory_status,
@@ -36,6 +40,7 @@ from ui.export_utils import export_rows_to_csv
 class HistoryGraph(QWidget):
     def __init__(self, line_color):
         super().__init__()
+        self.setObjectName("perfHistoryGraph")
         self.setMinimumHeight(84)
         self.setMaximumHeight(96)
         self._line_color = QColor(line_color)
@@ -96,10 +101,20 @@ class HistoryGraph(QWidget):
         gradient.setColorAt(1.0, self._fill_end)
         painter.fillPath(fill_path, gradient)
 
+        glow_pen = QPen(self._line_color)
+        glow_pen.setWidth(6)
+        glow_pen.setColor(QColor(self._line_color.red(), self._line_color.green(), self._line_color.blue(), 72))
+        painter.setPen(glow_pen)
+        painter.drawPath(line_path)
+
         line_pen = QPen(self._line_color)
         line_pen.setWidth(2)
         painter.setPen(line_pen)
         painter.drawPath(line_path)
+
+        painter.setBrush(self._line_color)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(points[-1], 3.5, 3.5)
 
         label_pen = QPen(QColor(236, 245, 252, 215))
         painter.setPen(label_pen)
@@ -109,9 +124,14 @@ class HistoryGraph(QWidget):
 
 
 class MetricCard(QFrame):
-    def __init__(self, title, accent_color):
+    def __init__(self, title, accent_color, metric_role):
         super().__init__()
         self.setObjectName("perfCard")
+        self.setProperty("metricRole", metric_role)
+        self._last_value_text = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(lambda: self._set_hot_state(False))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
@@ -120,22 +140,28 @@ class MetricCard(QFrame):
 
         self.title_label = QLabel(title)
         self.title_label.setObjectName("perfCardTitle")
+        self.title_label.setProperty("metricRole", metric_role)
 
         self.value_label = QLabel("--")
         self.value_label.setObjectName("perfCardValue")
+        self.value_label.setProperty("metricRole", metric_role)
 
         self.subtitle_label = QLabel("")
         self.subtitle_label.setObjectName("perfCardSubtitle")
         self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setProperty("metricRole", metric_role)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("perfProgress")
+        self.progress_bar.setProperty("metricRole", metric_role)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setTextVisible(False)
 
         self.graph = HistoryGraph(accent_color)
+        self.graph.setProperty("metricRole", metric_role)
         self.history_label = QLabel("60-second history")
         self.history_label.setObjectName("perfGraphCaption")
+        self.history_label.setProperty("metricRole", metric_role)
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.value_label)
@@ -144,12 +170,31 @@ class MetricCard(QFrame):
         layout.addWidget(self.graph)
         layout.addWidget(self.history_label)
 
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(36)
+        shadow.setOffset(0, 14)
+        shadow.setColor(QColor(4, 10, 18, 90))
+        self.setGraphicsEffect(shadow)
+
     def update_metric(self, value_text, progress_value, subtitle):
         bounded_value = max(0, min(int(progress_value), 100))
+        if value_text != self._last_value_text:
+            self._set_hot_state(True)
+            self._flash_timer.start(280)
+            self._last_value_text = value_text
         self.value_label.setText(value_text)
         self.subtitle_label.setText(subtitle)
         self.progress_bar.setValue(bounded_value)
         self.graph.push(progress_value)
+
+    def _set_hot_state(self, active):
+        active = bool(active)
+        if self.property("valueHot") == active:
+            return
+        self.setProperty("valueHot", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def export_rows(self):
         return [
@@ -180,6 +225,12 @@ class DetailSection(QFrame):
         self.rows_layout.setHorizontalSpacing(16)
         self.rows_layout.setVerticalSpacing(10)
         layout.addLayout(self.rows_layout)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(30)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(4, 10, 18, 74))
+        self.setGraphicsEffect(shadow)
 
     def set_rows(self, rows):
         rows = list(rows)
@@ -225,6 +276,7 @@ class PerformanceTab(QWidget):
         self._last_connections_update = 0.0
         self._cached_connections_text = "N/A"
         self._nvidia_smi_path = shutil.which("nvidia-smi") or "C:\\Windows\\System32\\nvidia-smi.exe"
+        self._cpu_monitor = NativeCpuUsageMonitor()
         self._disk_monitor = NativeDiskActivityMonitor()
         self._gpu_monitor = NativeGpuUsageMonitor()
         self._cpu_name_value = self._cpu_name()
@@ -239,7 +291,7 @@ class PerformanceTab(QWidget):
         self._temperature_cache_ttl = 5.0
         self._connections_cache_ttl = 5.0
         self._timer_interval_ms = REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE]["performance_timer_ms"]
-        self._hidden_page_refresh_every = 3
+        self._hidden_page_refresh_every = 1
         self._refresh_cycle = 0
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
         self._resume_timer = QTimer(self)
@@ -253,7 +305,12 @@ class PerformanceTab(QWidget):
 
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("perfSidebar")
-        self.sidebar.addItems(["Overview", "CPU", "Memory", "Disk", "Network", "GPU"])
+        self._add_sidebar_item("Overview", QStyle.StandardPixmap.SP_DesktopIcon)
+        self._add_sidebar_item("CPU", QStyle.StandardPixmap.SP_ComputerIcon)
+        self._add_sidebar_item("Memory", QStyle.StandardPixmap.SP_FileIcon)
+        self._add_sidebar_item("Disk", QStyle.StandardPixmap.SP_DriveHDIcon)
+        self._add_sidebar_item("Network", QStyle.StandardPixmap.SP_BrowserReload)
+        self._add_sidebar_item("GPU", QStyle.StandardPixmap.SP_FileDialogInfoView)
         self.sidebar.setFixedWidth(170)
         root_layout.addWidget(self.sidebar)
 
@@ -284,12 +341,12 @@ class PerformanceTab(QWidget):
         metrics_layout.setHorizontalSpacing(14)
         metrics_layout.setVerticalSpacing(14)
 
-        self.cpu_card = MetricCard("CPU Usage", "#5ec8ff")
-        self.memory_card = MetricCard("Physical Memory", "#2ed3a8")
-        self.disk_card = MetricCard("Disk Active Time", "#ffb84d")
-        self.network_card = MetricCard("Network Activity", "#ff6bb0")
-        self.gpu_usage_card = MetricCard("GPU Usage", "#ff8b6b")
-        self.gpu_temp_card = MetricCard("GPU Temp", "#ff6b8f")
+        self.cpu_card = MetricCard("CPU Usage", "#5ec8ff", "cpu")
+        self.memory_card = MetricCard("Physical Memory", "#2ed3a8", "memory")
+        self.disk_card = MetricCard("Disk Active Time", "#ffb84d", "disk")
+        self.network_card = MetricCard("Network Activity", "#ff6bb0", "network")
+        self.gpu_usage_card = MetricCard("GPU Usage", "#ff8b6b", "gpu")
+        self.gpu_temp_card = MetricCard("GPU Temp", "#ff6b8f", "temperature")
 
         metrics_layout.addWidget(self.cpu_card, 0, 0)
         metrics_layout.addWidget(self.memory_card, 0, 1)
@@ -368,13 +425,17 @@ class PerformanceTab(QWidget):
 
     def _add_focus_page(self, title, accent_color, section_title, rows):
         page, layout = self._create_scroll_page()
-        card = MetricCard(title, accent_color)
+        card = MetricCard(title, accent_color, title.lower())
         section = DetailSection(section_title)
         section.set_rows(rows)
         layout.addWidget(card)
         layout.addWidget(section)
         self.stack.addWidget(page)
         return card, section
+
+    def _add_sidebar_item(self, label, icon_kind):
+        item = QListWidgetItem(self.style().standardIcon(icon_kind), label)
+        self.sidebar.addItem(item)
 
     def _create_scroll_page(self):
         scroll = QScrollArea()
@@ -396,7 +457,9 @@ class PerformanceTab(QWidget):
         self._last_refresh_text = f"Performance updated: {time.strftime('%I:%M:%S %p').lstrip('0')}"
         self._refresh_cycle += 1
         current_page = max(self.sidebar.currentRow(), 0)
-        cpu_percent = psutil.cpu_percent(interval=None)
+        cpu_percent = self._cpu_monitor.read_percent()
+        if cpu_percent is None:
+            cpu_percent = psutil.cpu_percent(interval=None)
         native_memory = native_memory_status()
         memory = psutil.virtual_memory()
         if native_memory is not None:
@@ -503,7 +566,7 @@ class PerformanceTab(QWidget):
 
     def set_low_overhead_mode(self, enabled):
         self._low_overhead_mode = bool(enabled)
-        self._hidden_page_refresh_every = 5 if self._low_overhead_mode else 3
+        self._hidden_page_refresh_every = 3 if self._low_overhead_mode else 1
         self._apply_runtime_budget()
 
     def set_compact_mode(self, enabled):
@@ -520,6 +583,10 @@ class PerformanceTab(QWidget):
         self.refresh_now()
 
     def shutdown(self):
+        try:
+            self._cpu_monitor.close()
+        except Exception:
+            pass
         try:
             self._disk_monitor.close()
         except Exception:
@@ -543,7 +610,7 @@ class PerformanceTab(QWidget):
     def status_refresh_text(self):
         return self._last_refresh_text
 
-    def pause_refresh_temporarily(self, duration_ms=450):
+    def pause_refresh_temporarily(self, duration_ms=220):
         if not self._active or self._runtime_paused:
             return
         self.timer.stop()
@@ -555,7 +622,7 @@ class PerformanceTab(QWidget):
         self.timer.stop()
         self._resume_timer.stop()
 
-    def resume_after_menu_close(self, delay_ms=250):
+    def resume_after_menu_close(self, delay_ms=120):
         if not self._active or self._runtime_paused:
             return
         self._resume_timer.start(delay_ms)
@@ -898,8 +965,9 @@ class PerformanceTab(QWidget):
             REFRESH_PROFILES[DEFAULT_REFRESH_PROFILE],
         )
         multiplier = 1.8 if self._low_overhead_mode else 1.0
-        self._temperature_cache_ttl = max(config["performance_timer_ms"] / 1000.0 * 2.5, 5.0) * multiplier
-        self._connections_cache_ttl = max(config["performance_timer_ms"] / 1000.0 * 2.5, 5.0) * multiplier
+        base_ttl = max(config["performance_timer_ms"] / 1000.0 * 1.5, 2.0)
+        self._temperature_cache_ttl = base_ttl * multiplier
+        self._connections_cache_ttl = base_ttl * multiplier
 
     def _save_current_page(self, index):
         self.settings.setValue("performance/current_page", int(index))

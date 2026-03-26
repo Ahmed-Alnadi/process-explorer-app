@@ -1,158 +1,362 @@
 QWidget {
     background-color: #09131d;
-    color: #eef3f8;
+    color: #eef5fb;
     font-size: 14px;
     font-family: "Segoe UI Variable Text", "Bahnschrift", "Segoe UI";
+}
+
+QToolTip {
+    background-color: rgba(10, 22, 34, 244);
+    color: #f6fbff;
+    border: 1px solid rgba(148, 224, 255, 0.26);
+    border-radius: 10px;
+    padding: 8px 10px;
 }
 
 #windowRoot {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 #09131d,
-        stop: 0.55 #0d1926,
-        stop: 1 #122130
+        stop: 0 #07101a,
+        stop: 0.28 #0b1623,
+        stop: 0.62 #0f1c2c,
+        stop: 1 #13233a
+    );
+}
+
+#titleBar {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(16, 31, 46, 0.96),
+        stop: 0.52 rgba(14, 28, 43, 0.94),
+        stop: 1 rgba(11, 23, 36, 0.98)
+    );
+    border: 1px solid rgba(149, 223, 255, 0.16);
+    border-radius: 20px;
+}
+
+#titleBadge {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 #45b8ff,
+        stop: 1 #6ae3d7
+    );
+    color: #04101c;
+    border-radius: 14px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 16px;
+    qproperty-alignment: AlignCenter;
+}
+
+#windowTitleLabel {
+    color: #f8fcff;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 15px;
+}
+
+#windowStatusLabel {
+    color: #d7e5ef;
+    font-size: 11px;
+}
+
+#titleBarButton,
+#titleBarCloseButton {
+    min-width: 38px;
+    min-height: 32px;
+    max-width: 38px;
+    max-height: 32px;
+    border-radius: 11px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+    font-size: 13px;
+}
+
+#titleBarButton {
+    background: rgba(20, 39, 57, 0.92);
+    border: 1px solid rgba(149, 223, 255, 0.12);
+    color: #eef5fb;
+}
+
+#titleBarButton:hover {
+    background: rgba(35, 66, 94, 0.98);
+    border: 1px solid rgba(149, 223, 255, 0.28);
+}
+
+#titleBarButton:pressed {
+    background: rgba(52, 96, 136, 0.98);
+}
+
+#titleBarCloseButton {
+    background: rgba(77, 28, 40, 0.92);
+    border: 1px solid rgba(255, 170, 185, 0.12);
+    color: #fff2f4;
+}
+
+#titleBarCloseButton:hover {
+    background: rgba(136, 45, 64, 0.98);
+    border: 1px solid rgba(255, 188, 199, 0.30);
+}
+
+#titleBarCloseButton:pressed {
+    background: rgba(170, 56, 79, 0.98);
+}
+
+#backdropOrbA,
+#backdropOrbB {
+    border-radius: 999px;
+    border: none;
+}
+
+#backdropOrbA {
+    background: qradialgradient(
+        cx: 0.42, cy: 0.38, radius: 0.86,
+        fx: 0.42, fy: 0.38,
+        stop: 0 rgba(94, 200, 255, 0.24),
+        stop: 0.42 rgba(35, 132, 194, 0.14),
+        stop: 1 rgba(6, 18, 30, 0.0)
+    );
+}
+
+#backdropOrbB {
+    background: qradialgradient(
+        cx: 0.56, cy: 0.44, radius: 0.88,
+        fx: 0.56, fy: 0.44,
+        stop: 0 rgba(255, 102, 153, 0.18),
+        stop: 0.45 rgba(135, 88, 214, 0.10),
+        stop: 1 rgba(8, 18, 29, 0.0)
     );
 }
 
 #navSidebar {
-    background-color: rgba(8, 18, 29, 0.86);
-    border: 1px solid rgba(134, 201, 255, 0.14);
-    border-radius: 18px;
-    padding: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(13, 26, 40, 0.80),
+        stop: 1 rgba(8, 18, 29, 0.66)
+    );
+    border: 1px solid rgba(153, 225, 255, 0.15);
+    border-radius: 22px;
+    padding: 10px;
     outline: none;
 }
 
 #navSidebar::item {
-    padding: 10px 12px;
-    margin: 3px 0;
-    border-radius: 12px;
-    color: #e7f0f7;
+    padding: 12px 14px;
+    margin: 4px 0;
+    border-radius: 14px;
+    color: #edf5fb;
 }
 
 #navSidebar[compactMode="true"]::item {
-    padding: 7px 10px;
+    padding: 8px 11px;
     margin: 2px 0;
 }
 
 #navSidebar::item:selected {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 #1e516d,
-        stop: 1 #2a9d8f
+        stop: 0 rgba(26, 99, 133, 0.96),
+        stop: 0.55 rgba(46, 148, 162, 0.96),
+        stop: 1 rgba(88, 124, 223, 0.92)
     );
-    color: white;
+    color: #ffffff;
 }
 
 #navSidebar::item:hover:!selected {
-    background-color: rgba(110, 180, 222, 0.12);
+    background-color: rgba(118, 194, 231, 0.12);
 }
 
 #contentPanel {
-    background-color: rgba(10, 22, 34, 0.82);
-    border: 1px solid rgba(142, 212, 255, 0.12);
-    border-radius: 24px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(12, 23, 36, 0.78),
+        stop: 0.45 rgba(13, 28, 43, 0.74),
+        stop: 1 rgba(10, 21, 32, 0.80)
+    );
+    border: 1px solid rgba(150, 224, 255, 0.14);
+    border-radius: 28px;
 }
 
 #headerTitle {
-    font-size: 28px;
+    font-size: 30px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
     font-weight: 600;
-    color: #f4fbff;
+    color: #f7fbff;
     letter-spacing: 1px;
     background: transparent;
 }
 
 #headerSubtitle {
-    color: #c7d7e4;
+    color: #d3e1ec;
     font-size: 13px;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
     background: transparent;
 }
 
 #searchField {
-    background-color: rgba(18, 34, 49, 0.96);
-    border: 1px solid rgba(155, 220, 255, 0.16);
-    border-radius: 14px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(19, 34, 49, 0.94),
+        stop: 1 rgba(15, 29, 44, 0.96)
+    );
+    border: 1px solid rgba(149, 223, 255, 0.15);
+    border-radius: 16px;
     padding: 12px 14px;
-    selection-background-color: #2a9d8f;
+    selection-background-color: rgba(47, 166, 196, 0.88);
+}
+
+#searchField:hover {
+    border: 1px solid rgba(129, 215, 255, 0.28);
 }
 
 #searchField:focus {
-    border: 1px solid rgba(87, 195, 255, 0.78);
+    border: 1px solid rgba(96, 204, 255, 0.78);
+    background-color: rgba(20, 40, 58, 0.98);
 }
 
 #searchField[echoMode="0"] {
-    color: #f2f8fd;
+    color: #f3f8fd;
 }
 
-#pageStack {
+#pageStack,
+#perfStack {
     border: none;
     background: transparent;
 }
 
 #metricCard {
+    border-radius: 18px;
+    padding: 13px 18px;
+    color: #f6fbff;
+    border: 1px solid rgba(160, 225, 255, 0.14);
+    font-size: 15px;
+    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+#metricCard[metricRole="cpu"] {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 rgba(18, 41, 58, 0.96),
-        stop: 1 rgba(22, 59, 74, 0.96)
+        stop: 0 rgba(18, 46, 74, 0.94),
+        stop: 1 rgba(14, 68, 102, 0.90)
     );
-    border: 1px solid rgba(155, 220, 255, 0.14);
-    border-radius: 14px;
-    padding: 12px 16px;
-    color: #f4fbff;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
-    font-size: 15px;
+    border: 1px solid rgba(111, 209, 255, 0.24);
+}
+
+#metricCard[metricRole="memory"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(13, 50, 52, 0.94),
+        stop: 1 rgba(17, 88, 84, 0.90)
+    );
+    border: 1px solid rgba(84, 230, 191, 0.24);
+}
+
+#metricCard[metricRole="disk"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(64, 47, 18, 0.94),
+        stop: 1 rgba(117, 80, 22, 0.90)
+    );
+    border: 1px solid rgba(255, 197, 92, 0.24);
+}
+
+#metricCard[metricRole="network"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(65, 25, 66, 0.94),
+        stop: 1 rgba(110, 35, 108, 0.90)
+    );
+    border: 1px solid rgba(255, 129, 216, 0.24);
+}
+
+#metricCard[metricRole="gpu"],
+#metricCard[metricRole="temperature"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(72, 28, 36, 0.94),
+        stop: 1 rgba(118, 42, 62, 0.90)
+    );
+    border: 1px solid rgba(255, 130, 154, 0.24);
+}
+
+#metricCard[metricRole="serviceRunning"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(13, 52, 44, 0.94),
+        stop: 1 rgba(20, 95, 75, 0.90)
+    );
+    border: 1px solid rgba(99, 230, 180, 0.22);
+}
+
+#metricCard[metricRole="serviceStopped"] {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(54, 34, 21, 0.94),
+        stop: 1 rgba(104, 59, 30, 0.90)
+    );
+    border: 1px solid rgba(255, 186, 111, 0.22);
 }
 
 #processTree {
-    background-color: rgba(8, 18, 29, 0.72);
-    alternate-background-color: rgba(14, 29, 43, 0.76);
-    border: 1px solid rgba(149, 218, 255, 0.14);
-    border-radius: 18px;
-    padding: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(9, 20, 31, 0.76),
+        stop: 1 rgba(8, 17, 28, 0.66)
+    );
+    alternate-background-color: rgba(16, 31, 46, 0.60);
+    border: 1px solid rgba(149, 223, 255, 0.13);
+    border-radius: 20px;
+    padding: 10px;
     outline: none;
-    color: #eef5fb;
+    color: #eef6fc;
 }
 
 #processTree::item {
-    padding: 9px 7px;
-    border-radius: 8px;
+    padding: 10px 8px;
+    border-radius: 10px;
 }
 
 #processTree[compactMode="true"]::item {
-    padding: 5px 6px;
+    padding: 6px 6px;
 }
 
 #processTree::item:hover {
-    background-color: rgba(72, 133, 165, 0.16);
+    background-color: rgba(79, 141, 177, 0.14);
 }
 
 #processTree::item:selected {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(34, 88, 116, 0.95),
-        stop: 1 rgba(38, 143, 128, 0.92)
+        stop: 0 rgba(29, 95, 132, 0.94),
+        stop: 0.62 rgba(44, 154, 153, 0.88),
+        stop: 1 rgba(69, 126, 220, 0.82)
     );
-    color: white;
+    color: #ffffff;
 }
 
 QSplitter::handle {
-    background: rgba(149, 218, 255, 0.05);
+    background: rgba(149, 223, 255, 0.05);
+    border-radius: 4px;
 }
 
 QSplitter::handle:hover {
-    background: rgba(149, 218, 255, 0.14);
+    background: rgba(149, 223, 255, 0.15);
 }
 
 #sidePanel {
-    background-color: rgba(12, 25, 37, 0.92);
-    border: 1px solid rgba(149, 218, 255, 0.12);
-    border-radius: 18px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(14, 28, 43, 0.92),
+        stop: 1 rgba(10, 21, 34, 0.88)
+    );
+    border: 1px solid rgba(149, 223, 255, 0.12);
+    border-radius: 20px;
 }
 
 #sidePanel[protectedState="true"] {
-    border: 1px solid rgba(232, 113, 132, 0.58);
-    background-color: rgba(30, 19, 28, 0.94);
+    border: 1px solid rgba(232, 113, 132, 0.52);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(35, 19, 27, 0.96),
+        stop: 1 rgba(24, 14, 20, 0.92)
+    );
 }
 
 #sidePanelScroll,
@@ -162,7 +366,7 @@ QSplitter::handle:hover {
 }
 
 #sidePanelTitle {
-    color: #f4fbff;
+    color: #f7fbff;
     font-size: 22px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
@@ -171,27 +375,29 @@ QSplitter::handle:hover {
     background: rgba(210, 84, 103, 0.22);
     color: #ffdce4;
     border: 1px solid rgba(231, 110, 130, 0.52);
-    border-radius: 10px;
-    padding: 4px 10px;
+    border-radius: 11px;
+    padding: 4px 11px;
     font-size: 11px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
     letter-spacing: 1px;
 }
 
 #sidePanelSubtitle {
-    color: #d5e2ec;
+    color: #dce7ef;
     font-size: 12px;
 }
 
-#sideKey {
-    color: #d6e2eb;
+#sideKey,
+#detailKey {
+    color: #dbe8f1;
     font-size: 12px;
 }
 
-#sideValue {
-    color: #eef5fb;
+#sideValue,
+#detailValue {
+    color: #f1f7fc;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
-    padding-top: 1px;
+    padding-top: 2px;
 }
 
 #perfScroll,
@@ -199,19 +405,29 @@ QSplitter::handle:hover {
     background: transparent;
 }
 
+QScrollArea#perfScroll {
+    border: 1px solid rgba(149, 223, 255, 0.10);
+    border-radius: 20px;
+    background-color: rgba(9, 18, 29, 0.15);
+}
+
 #perfSidebar {
-    background-color: rgba(8, 18, 29, 0.74);
-    border: 1px solid rgba(149, 218, 255, 0.12);
-    border-radius: 18px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(13, 26, 40, 0.78),
+        stop: 1 rgba(8, 18, 29, 0.64)
+    );
+    border: 1px solid rgba(149, 223, 255, 0.12);
+    border-radius: 20px;
     padding: 10px;
     outline: none;
 }
 
 #perfSidebar::item {
-    padding: 10px 12px;
+    padding: 11px 13px;
     margin: 4px 0;
-    border-radius: 10px;
-    color: #e5eef6;
+    border-radius: 12px;
+    color: #edf4fa;
 }
 
 #perfSidebar[compactMode="true"]::item {
@@ -222,125 +438,186 @@ QSplitter::handle:hover {
 #perfSidebar::item:selected {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(38, 143, 128, 0.95),
-        stop: 1 rgba(94, 200, 255, 0.9)
+        stop: 0 rgba(29, 95, 132, 0.94),
+        stop: 0.62 rgba(44, 154, 153, 0.88),
+        stop: 1 rgba(69, 126, 220, 0.82)
     );
-    color: white;
+    color: #ffffff;
 }
 
 #perfSidebar::item:hover:!selected {
-    background-color: rgba(110, 180, 222, 0.12);
-}
-
-#perfStack {
-    background: transparent;
-    border: none;
+    background-color: rgba(118, 194, 231, 0.12);
 }
 
 #perfCard,
 #detailSection {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 rgba(11, 24, 37, 0.96),
-        stop: 1 rgba(17, 36, 52, 0.94)
+        stop: 0 rgba(14, 28, 43, 0.92),
+        stop: 0.55 rgba(12, 24, 36, 0.88),
+        stop: 1 rgba(10, 20, 31, 0.94)
     );
-    border: 1px solid rgba(149, 218, 255, 0.24);
-    border-radius: 20px;
+    border: 1px solid rgba(150, 223, 255, 0.16);
+    border-radius: 24px;
 }
 
 #perfCard:hover,
 #detailSection:hover {
-    border: 1px solid rgba(149, 218, 255, 0.34);
+    border: 1px solid rgba(168, 232, 255, 0.28);
+}
+
+#perfCard[valueHot="true"] {
+    border: 1px solid rgba(227, 245, 255, 0.38);
+}
+
+#perfCard[metricRole="cpu"] {
+    border: 1px solid rgba(111, 209, 255, 0.24);
+}
+
+#perfCard[metricRole="memory"] {
+    border: 1px solid rgba(84, 230, 191, 0.24);
+}
+
+#perfCard[metricRole="disk"] {
+    border: 1px solid rgba(255, 197, 92, 0.24);
+}
+
+#perfCard[metricRole="network"] {
+    border: 1px solid rgba(255, 129, 216, 0.24);
+}
+
+#perfCard[metricRole="gpu"],
+#perfCard[metricRole="temperature"] {
+    border: 1px solid rgba(255, 130, 154, 0.24);
 }
 
 #perfCardTitle,
 #detailSectionTitle {
-    color: #8fd7ff;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
     font-size: 13px;
     letter-spacing: 1px;
 }
 
+#perfCardTitle[metricRole="cpu"] { color: #89d7ff; }
+#perfCardTitle[metricRole="memory"] { color: #7fe4c1; }
+#perfCardTitle[metricRole="disk"] { color: #ffd078; }
+#perfCardTitle[metricRole="network"] { color: #ff95dc; }
+#perfCardTitle[metricRole="gpu"],
+#perfCardTitle[metricRole="temperature"] { color: #ff96b2; }
+#detailSectionTitle { color: #c3e6ff; }
+
 #perfCardValue {
-    color: #f6fbff;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
-    font-size: 30px;
+    color: #f8fcff;
+    font-family: "Cascadia Code SemiBold", "Cascadia Mono", "Consolas";
+    font-size: 34px;
 }
 
 #perfCardSubtitle {
-    color: #e0ebf3;
+    color: #e4eef5;
     font-size: 12px;
 }
 
 #perfGraphCaption {
-    color: #d7e7f3;
+    color: #dce9f3;
     font-size: 11px;
     padding-top: 2px;
 }
 
 #perfProgress {
     border: none;
-    border-radius: 7px;
-    background-color: rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
     min-height: 10px;
 }
 
-#perfProgress::chunk {
-    border-radius: 7px;
+#perfProgress[metricRole="cpu"]::chunk {
+    border-radius: 8px;
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 #2a9d8f,
-        stop: 1 #5ec8ff
+        stop: 0 #2c92ff,
+        stop: 1 #75dbff
     );
 }
 
-#detailKey {
-    color: #d8e6ef;
-    font-size: 12px;
+#perfProgress[metricRole="memory"]::chunk {
+    border-radius: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #1fbf98,
+        stop: 1 #7ff3c8
+    );
 }
 
-#detailValue {
-    color: #eef5fb;
-    font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
-    padding-top: 1px;
+#perfProgress[metricRole="disk"]::chunk {
+    border-radius: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #f1a93e,
+        stop: 1 #ffd47d
+    );
+}
+
+#perfProgress[metricRole="network"]::chunk {
+    border-radius: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #d85cff,
+        stop: 1 #ff94dd
+    );
+}
+
+#perfProgress[metricRole="gpu"]::chunk,
+#perfProgress[metricRole="temperature"]::chunk {
+    border-radius: 8px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #ff6b7d,
+        stop: 1 #ffb18b
+    );
 }
 
 QHeaderView::section {
-    background-color: rgba(19, 40, 56, 0.96);
-    color: #f0f7fc;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(22, 43, 59, 0.96),
+        stop: 1 rgba(14, 29, 42, 0.98)
+    );
+    color: #f3f8fd;
     border: none;
-    border-right: 1px solid rgba(149, 218, 255, 0.08);
-    padding: 11px 9px;
+    border-right: 1px solid rgba(149, 223, 255, 0.08);
+    border-bottom: 1px solid rgba(149, 223, 255, 0.08);
+    padding: 12px 10px;
     font-size: 13px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
 
 QHeaderView[compactMode="true"]::section {
-    padding: 7px 8px;
+    padding: 8px 8px;
     font-size: 12px;
 }
 
 QMenu {
     background-color: rgba(10, 22, 34, 0.98);
-    border: 1px solid rgba(149, 218, 255, 0.18);
-    border-radius: 12px;
+    border: 1px solid rgba(149, 223, 255, 0.18);
+    border-radius: 14px;
     padding: 8px;
 }
 
 QMenu::item {
-    padding: 9px 18px 9px 12px;
+    padding: 10px 18px 10px 12px;
     margin: 2px 0;
-    border-radius: 8px;
+    border-radius: 10px;
     color: #eef6fc;
 }
 
 QMenu::item:selected {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(34, 88, 116, 0.95),
-        stop: 1 rgba(38, 143, 128, 0.92)
+        stop: 0 rgba(29, 95, 132, 0.94),
+        stop: 0.62 rgba(44, 154, 153, 0.88),
+        stop: 1 rgba(69, 126, 220, 0.82)
     );
-    color: white;
+    color: #ffffff;
 }
 
 QMenu::item:disabled {
@@ -349,82 +626,104 @@ QMenu::item:disabled {
 
 QMenu::separator {
     height: 1px;
-    background: rgba(149, 218, 255, 0.12);
+    background: rgba(149, 223, 255, 0.12);
     margin: 6px 8px;
 }
 
 #dangerButton {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 #8f2d3a,
-        stop: 1 #d1495b
+        stop: 0 #8e3140,
+        stop: 0.5 #c54761,
+        stop: 1 #ec6c7e
     );
     color: white;
-    border: none;
-    border-radius: 14px;
-    padding: 11px 18px;
+    border: 1px solid rgba(255, 187, 200, 0.16);
+    border-radius: 16px;
+    padding: 12px 20px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
 
 #dangerButton:hover {
-    background: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 #a53744,
-        stop: 1 #ea5f70
-    );
+    border: 1px solid rgba(255, 221, 227, 0.34);
 }
 
 #dangerButton:disabled {
-    background: rgba(110, 124, 137, 0.35);
-    color: rgba(230, 236, 241, 0.55);
+    background: rgba(110, 124, 137, 0.28);
+    color: rgba(230, 236, 241, 0.52);
+    border: 1px solid rgba(170, 185, 200, 0.10);
 }
 
 #secondaryButton {
-    background-color: rgba(18, 34, 49, 0.96);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(23, 41, 58, 0.96),
+        stop: 1 rgba(16, 31, 46, 0.98)
+    );
     border: 1px solid rgba(155, 220, 255, 0.16);
-    border-radius: 12px;
-    padding: 10px 14px;
+    border-radius: 14px;
+    padding: 10px 15px;
     color: #eef5fb;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
 }
 
 #secondaryButton:hover {
-    border: 1px solid rgba(87, 195, 255, 0.62);
-    background-color: rgba(24, 48, 68, 0.98);
+    border: 1px solid rgba(119, 212, 255, 0.38);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(29, 52, 71, 0.98),
+        stop: 1 rgba(19, 39, 58, 1.0)
+    );
 }
 
 #secondaryButton:pressed,
 #secondaryButton[flashActive="true"] {
-    border: 1px solid rgba(114, 226, 255, 0.86);
-    background-color: rgba(37, 82, 112, 0.98);
+    border: 1px solid rgba(161, 234, 255, 0.68);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(39, 94, 130, 0.98),
+        stop: 1 rgba(56, 124, 168, 0.98)
+    );
     color: #ffffff;
 }
 
 #secondaryButton[toggleControl="true"]:checked {
-    border: 1px solid rgba(87, 220, 191, 0.88);
-    background: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(30, 93, 104, 0.98),
-        stop: 1 rgba(42, 157, 143, 0.98)
-    );
+    border: 1px solid rgba(177, 235, 255, 0.40);
     color: #ffffff;
 }
 
-#secondaryButton[accentAction="true"] {
-    border: 1px solid rgba(114, 226, 255, 0.34);
+#secondaryButton[toggleControl="true"]:checked:hover {
+    border: 1px solid rgba(222, 247, 255, 0.50);
+}
+
+#secondaryButton[toggleControl="true"]:checked[text="Compact On"],
+#secondaryButton[toggleControl="true"]:checked[text="Compact"] {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(24, 54, 78, 0.98),
-        stop: 1 rgba(18, 72, 93, 0.98)
+        stop: 0 rgba(30, 83, 108, 0.98),
+        stop: 1 rgba(50, 133, 191, 0.98)
     );
 }
 
-#secondaryButton[refreshProfile="high"] {
-    border: 1px solid rgba(255, 143, 143, 0.58);
+#secondaryButton[toggleControl="true"]:checked[text="Low Overhead On"],
+#secondaryButton[toggleControl="true"]:checked[text="Low Overhead"] {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(110, 38, 38, 0.98),
-        stop: 1 rgba(168, 58, 58, 0.98)
+        stop: 0 rgba(36, 96, 82, 0.98),
+        stop: 1 rgba(55, 158, 122, 0.98)
+    );
+}
+
+#secondaryButton[accentAction="true"] {
+    border: 1px solid rgba(114, 226, 255, 0.28);
+}
+
+#secondaryButton[refreshProfile="high"] {
+    border: 1px solid rgba(255, 161, 161, 0.44);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(122, 44, 47, 0.98),
+        stop: 1 rgba(193, 76, 83, 0.98)
     );
 }
 
@@ -432,26 +731,26 @@ QMenu::separator {
     border: 1px solid rgba(114, 226, 255, 0.42);
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(24, 54, 78, 0.98),
-        stop: 1 rgba(18, 72, 93, 0.98)
+        stop: 0 rgba(25, 71, 108, 0.98),
+        stop: 1 rgba(41, 122, 168, 0.98)
     );
 }
 
 #secondaryButton[refreshProfile="low"] {
-    border: 1px solid rgba(255, 213, 120, 0.52);
+    border: 1px solid rgba(255, 213, 120, 0.42);
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(96, 72, 24, 0.98),
-        stop: 1 rgba(140, 100, 28, 0.98)
+        stop: 0 rgba(102, 73, 23, 0.98),
+        stop: 1 rgba(164, 111, 27, 0.98)
     );
 }
 
 #secondaryButton[refreshProfile="paused"] {
-    border: 1px solid rgba(167, 179, 192, 0.44);
+    border: 1px solid rgba(167, 179, 192, 0.34);
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(59, 68, 78, 0.98),
-        stop: 1 rgba(85, 95, 106, 0.98)
+        stop: 0 rgba(58, 66, 77, 0.98),
+        stop: 1 rgba(90, 100, 111, 0.98)
     );
 }
 
@@ -468,34 +767,24 @@ QMenu::separator {
 }
 
 #statusLabel {
-    color: #e7f0f7;
+    color: #edf5fb;
     padding-left: 2px;
     font-size: 13px;
 }
 
 QLabel {
-    color: #e5eef6;
+    color: #edf4fa;
     background: transparent;
 }
 
 QStatusBar {
-    background-color: rgba(8, 18, 29, 0.94);
-    border-top: 1px solid rgba(149, 218, 255, 0.12);
+    background-color: rgba(8, 18, 29, 0.96);
+    border-top: 1px solid rgba(149, 223, 255, 0.12);
 }
 
 #statusBarLabel {
-    color: #e2edf6;
+    color: #ecf4fb;
     padding: 3px 6px;
-}
-
-QScrollArea#perfScroll {
-    border: 1px solid rgba(149, 218, 255, 0.10);
-    border-radius: 18px;
-    background-color: rgba(9, 18, 29, 0.18);
-}
-
-QScrollArea#perfScroll > QWidget > QWidget#perfRoot {
-    background: transparent;
 }
 
 #adminStatusBadge {
@@ -510,4 +799,46 @@ QScrollArea#perfScroll > QWidget > QWidget#perfRoot {
     padding: 4px 10px;
     margin-right: 8px;
     font-family: "Bahnschrift SemiBold", "Segoe UI Variable Display", "Segoe UI";
+}
+
+QScrollBar:vertical {
+    background: rgba(10, 18, 28, 0.34);
+    width: 12px;
+    margin: 6px 2px 6px 2px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(114, 198, 240, 0.34);
+    min-height: 34px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(145, 220, 255, 0.50);
+}
+
+QScrollBar:horizontal {
+    background: rgba(10, 18, 28, 0.34);
+    height: 12px;
+    margin: 2px 6px 2px 6px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal {
+    background: rgba(114, 198, 240, 0.34);
+    min-width: 34px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: rgba(145, 220, 255, 0.50);
+}
+
+QScrollBar::add-line,
+QScrollBar::sub-line,
+QScrollBar::add-page,
+QScrollBar::sub-page {
+    background: transparent;
+    border: none;
 }

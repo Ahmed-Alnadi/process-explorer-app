@@ -36,8 +36,9 @@ class FlatEntryTableModel(QAbstractTableModel):
         self._entries = []
         self._tabular_font = self._build_tabular_font()
         self._pending_changed_ids = []
-        self._pending_batch_size = 120
+        self._pending_batch_size = 240
         self._pending_update_scheduled = False
+        self._pending_change_columns = {}
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -97,12 +98,12 @@ class FlatEntryTableModel(QAbstractTableModel):
             self._headers[column] = label
             self.headerDataChanged.emit(Qt.Orientation.Horizontal, column, column)
 
-    def sync_entries(self, entries, *, priority_ids=None, batch_size=None):
+    def sync_entries(self, entries, *, priority_ids=None, batch_size=None, refresh_brushes=False):
         incoming_entries = list(entries)
         incoming_by_id = {entry["id"]: entry for entry in incoming_entries}
         priority_ids = set(priority_ids or set())
         if batch_size:
-            self._pending_batch_size = max(int(batch_size), 24)
+            self._pending_batch_size = max(int(batch_size), 64)
 
         for row in range(len(self._entries) - 1, -1, -1):
             if self._entries[row]["id"] in incoming_by_id:
@@ -119,14 +120,15 @@ class FlatEntryTableModel(QAbstractTableModel):
                 continue
             if entry == updated_entry:
                 continue
+            changed_columns = self._changed_columns(entry, updated_entry, refresh_brushes)
             self._entries[row] = updated_entry
+            if not changed_columns:
+                continue
             if updated_entry["id"] in priority_ids:
-                self.dataChanged.emit(
-                    self.index(row, 0),
-                    self.index(row, len(self._headers) - 1),
-                )
-            else:
-                delayed_changed_ids.append(updated_entry["id"])
+                self._emit_columns_changed(row, changed_columns, refresh_brushes)
+                continue
+            delayed_changed_ids.append(updated_entry["id"])
+            self._pending_change_columns[updated_entry["id"]] = changed_columns
 
         new_entries = [entry for entry in incoming_entries if entry["id"] not in existing_ids]
         if new_entries:
@@ -154,6 +156,7 @@ class FlatEntryTableModel(QAbstractTableModel):
             return
         self.beginResetModel()
         self._entries = []
+        self._pending_change_columns.clear()
         self.endResetModel()
 
     def index_for_entry_id(self, entry_id, column=0):
@@ -190,13 +193,45 @@ class FlatEntryTableModel(QAbstractTableModel):
             index = self.index_for_entry_id(entry_id)
             if not index.isValid():
                 continue
-            self.dataChanged.emit(
-                self.index(index.row(), 0),
-                self.index(index.row(), len(self._headers) - 1),
-            )
+            changed_columns = self._pending_change_columns.pop(entry_id, None)
+            if not changed_columns:
+                continue
+            self._emit_columns_changed(index.row(), changed_columns, False)
 
         if self._pending_changed_ids:
             self._schedule_pending_updates()
+
+    def _changed_columns(self, old_entry, new_entry, refresh_brushes):
+        changed = []
+        for column in range(len(self._headers)):
+            display_changed = self._display_resolver(old_entry, column) != self._display_resolver(new_entry, column)
+            sort_changed = self._sort_resolver(old_entry, column) != self._sort_resolver(new_entry, column)
+            tooltip_changed = False
+            if self._tooltip_resolver is not None:
+                tooltip_changed = self._tooltip_resolver(old_entry, column) != self._tooltip_resolver(new_entry, column)
+            secondary_changed = False
+            if self._secondary_resolver is not None:
+                secondary_changed = self._secondary_resolver(old_entry, column) != self._secondary_resolver(new_entry, column)
+            background_changed = False
+            if refresh_brushes and self._background_resolver is not None:
+                background_changed = self._background_resolver(old_entry, column) != self._background_resolver(new_entry, column)
+            if display_changed or sort_changed or tooltip_changed or secondary_changed or background_changed:
+                changed.append(column)
+        return changed
+
+    def _emit_columns_changed(self, row, columns, refresh_brushes):
+        roles = [
+            Qt.ItemDataRole.DisplayRole,
+            self._roles["sort"],
+            Qt.ItemDataRole.ToolTipRole,
+            self._roles["secondary"],
+        ]
+        if refresh_brushes:
+            roles.append(Qt.ItemDataRole.BackgroundRole)
+        for column in columns:
+            top_left = self.index(row, column)
+            bottom_right = self.index(row, column)
+            self.dataChanged.emit(top_left, bottom_right, roles)
 
     def _build_tabular_font(self):
         font = QFont()
@@ -215,7 +250,7 @@ class EntryFilterProxyModel(QSortFilterProxyModel):
         super().__init__(parent)
         self._roles = roles
         self._filter_text = ""
-        self.setDynamicSortFilter(True)
+        self.setDynamicSortFilter(False)
         self.setSortRole(roles["sort"])
 
     def set_filter_text(self, text):

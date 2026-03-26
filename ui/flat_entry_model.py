@@ -280,3 +280,28 @@ class EntryFilterProxyModel(QSortFilterProxyModel):
 
         filter_text = source_model.filter_text_for_entry(source_row)
         return self._filter_text in (filter_text or "").lower()
+
+    def lessThan(self, left, right):
+        left_value = left.data(self.sortRole())
+        right_value = right.data(self.sortRole())
+        return self._compare_values(left_value, right_value) < 0
+
+    def _compare_values(self, left_value, right_value):
+        left_normalized = self._normalize_sort_value(left_value)
+        right_normalized = self._normalize_sort_value(right_value)
+        if left_normalized < right_normalized:
+            return -1
+        if left_normalized > right_normalized:
+            return 1
+        return 0
+
+    def _normalize_sort_value(self, value):
+        if value is None:
+            return (0, "")
+        if isinstance(value, tuple):
+            return (3, tuple(self._normalize_sort_value(item) for item in value))
+        if isinstance(value, list):
+            return (3, tuple(self._normalize_sort_value(item) for item in value))
+        if isinstance(value, (int, float)):
+            return (1, float(value))
+        return (2, str(value).lower())

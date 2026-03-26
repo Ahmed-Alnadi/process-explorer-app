@@ -723,6 +723,8 @@ class ProcessesTab(QWidget):
         self._rebuild_tree()
 
     def _rebuild_tree(self, force_sort=False, force_brush=False):
+        self._sort_refresh_timer.stop()
+        self._icon_refresh_timer.stop()
         selected_entry_id = self._selected_entry_id()
         expanded_keys = self._expanded_group_keys()
         vertical_scroll = self.tree.verticalScrollBar().value()
@@ -738,15 +740,22 @@ class ProcessesTab(QWidget):
         refresh_brushes = force_brush or (self._full_refresh_counter % self._brush_refresh_every == 0)
         self.tree.setUpdatesEnabled(False)
         try:
-            self.model.set_groups(
-                self.current_groups,
-                expanded_group_keys=load_children_keys,
-                load_all_children=bool(self.filter_text),
-                preserve_existing_order=preserve_existing_order,
-                refresh_brushes=refresh_brushes,
-                changed_group_ids=self._latest_group_hints.get("changed_group_ids", set()),
-                changed_child_ids_by_group=self._latest_group_hints.get("changed_child_ids_by_group", {}),
-            )
+            if self.filter_text:
+                self.model.reset_groups(
+                    self.current_groups,
+                    expanded_group_keys=load_children_keys,
+                    load_all_children=True,
+                )
+            else:
+                self.model.set_groups(
+                    self.current_groups,
+                    expanded_group_keys=load_children_keys,
+                    load_all_children=False,
+                    preserve_existing_order=preserve_existing_order,
+                    refresh_brushes=refresh_brushes,
+                    changed_group_ids=self._latest_group_hints.get("changed_group_ids", set()),
+                    changed_child_ids_by_group=self._latest_group_hints.get("changed_child_ids_by_group", {}),
+                )
             self._apply_expansion_state(expanded_keys)
             self._restore_selection(selected_entry_id)
         finally:

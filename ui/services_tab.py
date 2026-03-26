@@ -409,6 +409,8 @@ class ServicesTab(QWidget):
         self._sync_view()
 
     def _sync_view(self, force_sort=False, force_brush=False):
+        self._sort_refresh_timer.stop()
+        self._icon_refresh_timer.stop()
         selected_id = self._selected_entry_id()
         vertical_scroll = self.tree.verticalScrollBar().value()
         horizontal_scroll = self.tree.horizontalScrollBar().value()

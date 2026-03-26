@@ -110,6 +110,26 @@ class ProcessTreeModel(QAbstractItemModel):
                 changed_entry_ids=changed_child_ids_by_group.get(group["id"], set()),
             )
 
+    def reset_groups(self, groups, expanded_group_keys=None, load_all_children=False):
+        expanded_group_keys = expanded_group_keys or set()
+        ordered_groups = self._sorted_entries(groups, "group")
+        self.beginResetModel()
+        self._root = ProcessNode()
+        self._node_by_id = {}
+        for group in ordered_groups:
+            group_node = ProcessNode(group, "group", self._root)
+            self._root.children.append(group_node)
+            self._node_by_id[group["id"]] = group_node
+            should_load_children = load_all_children or group["group_key"] in expanded_group_keys
+            if not should_load_children:
+                continue
+            group_node.children_loaded = True
+            for child in self._sorted_entries(group["children"], "child"):
+                child_node = ProcessNode(child, "child", group_node)
+                group_node.children.append(child_node)
+                self._node_by_id[child["id"]] = child_node
+        self.endResetModel()
+
     def ensure_group_children_loaded(self, group_id):
         group_node = self._node_by_id.get(group_id)
         if group_node is None or group_node.kind != "group" or group_node.children_loaded:

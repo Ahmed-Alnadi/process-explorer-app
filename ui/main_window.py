@@ -784,8 +784,8 @@ class MainWindow(QMainWindow):
                 blue = int(hex_rgb[4:6], 16)
                 return red | (green << 8) | (blue << 16)
 
-            caption_color = ctypes.c_int(colorref("09131d"))
-            border_color = ctypes.c_int(colorref("13233a"))
+            caption_color = ctypes.c_int(colorref("040608"))
+            border_color = ctypes.c_int(colorref("040608"))
             text_color = ctypes.c_int(colorref("eef5fb"))
             for attribute, value in (
                 (35, caption_color),  # DWMWA_CAPTION_COLOR

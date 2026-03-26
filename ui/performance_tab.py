@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QProgressBar,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QStyle,
     QVBoxLayout,
@@ -46,9 +47,9 @@ class HistoryGraph(QWidget):
         self.setMaximumHeight(96)
         self._line_color = QColor(line_color)
         self._fill_start = QColor(line_color)
-        self._fill_start.setAlpha(120)
+        self._fill_start.setAlpha(170)
         self._fill_end = QColor(line_color)
-        self._fill_end.setAlpha(18)
+        self._fill_end.setAlpha(42)
         self._values = deque([0.0] * 50, maxlen=50)
 
     def push(self, value):
@@ -64,13 +65,13 @@ class HistoryGraph(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect().adjusted(8, 8, -8, -8)
-        painter.fillRect(rect, QColor(8, 18, 29, 85))
-        border_pen = QPen(QColor(160, 210, 240, 46))
+        painter.fillRect(rect, QColor(5, 8, 12, 150))
+        border_pen = QPen(QColor(190, 235, 255, 68))
         border_pen.setWidth(1)
         painter.setPen(border_pen)
         painter.drawRoundedRect(rect, 8, 8)
 
-        grid_pen = QPen(QColor(160, 210, 240, 24))
+        grid_pen = QPen(QColor(170, 220, 250, 34))
         grid_pen.setWidth(1)
         painter.setPen(grid_pen)
         for step in range(1, 4):
@@ -103,21 +104,21 @@ class HistoryGraph(QWidget):
         painter.fillPath(fill_path, gradient)
 
         glow_pen = QPen(self._line_color)
-        glow_pen.setWidth(6)
-        glow_pen.setColor(QColor(self._line_color.red(), self._line_color.green(), self._line_color.blue(), 72))
+        glow_pen.setWidth(8)
+        glow_pen.setColor(QColor(self._line_color.red(), self._line_color.green(), self._line_color.blue(), 118))
         painter.setPen(glow_pen)
         painter.drawPath(line_path)
 
         line_pen = QPen(self._line_color)
-        line_pen.setWidth(2)
+        line_pen.setWidth(3)
         painter.setPen(line_pen)
         painter.drawPath(line_path)
 
         painter.setBrush(self._line_color)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(points[-1], 3.5, 3.5)
+        painter.drawEllipse(points[-1], 4.5, 4.5)
 
-        label_pen = QPen(QColor(236, 245, 252, 215))
+        label_pen = QPen(QColor(250, 253, 255, 235))
         painter.setPen(label_pen)
         painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, "100%")
         painter.drawText(rect.adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom, "60s")
@@ -129,6 +130,8 @@ class MetricCard(QFrame):
         super().__init__()
         self.setObjectName("perfCard")
         self.setProperty("metricRole", metric_role)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(286)
         self._last_value_text = None
         self._flash_timer = QTimer(self)
         self._flash_timer.setSingleShot(True)
@@ -150,6 +153,9 @@ class MetricCard(QFrame):
         self.subtitle_label = QLabel("")
         self.subtitle_label.setObjectName("perfCardSubtitle")
         self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.subtitle_label.setMinimumHeight(34)
+        self.subtitle_label.setMaximumHeight(34)
         self.subtitle_label.setProperty("metricRole", metric_role)
 
         self.progress_bar = QProgressBar()
@@ -163,6 +169,7 @@ class MetricCard(QFrame):
         self.history_label = QLabel("60-second history")
         self.history_label.setObjectName("perfGraphCaption")
         self.history_label.setProperty("metricRole", metric_role)
+        self.history_label.setMinimumHeight(16)
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.value_label)
@@ -170,6 +177,7 @@ class MetricCard(QFrame):
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.graph)
         layout.addWidget(self.history_label)
+        layout.addStretch(0)
 
     def update_metric(self, value_text, progress_value, subtitle):
         bounded_value = max(0, min(int(progress_value), 100))

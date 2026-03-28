@@ -77,8 +77,13 @@ QToolTip {
 }
 
 #titleBarButton:hover {
-    background: rgba(35, 66, 94, 0.98);
-    border: 1px solid rgba(149, 223, 255, 0.28);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(47, 89, 126, 0.99),
+        stop: 1 rgba(20, 40, 60, 0.99)
+    );
+    border: 1px solid rgba(219, 245, 255, 0.52);
+    color: #ffffff;
 }
 
 #titleBarButton:pressed {
@@ -92,8 +97,13 @@ QToolTip {
 }
 
 #titleBarCloseButton:hover {
-    background: rgba(136, 45, 64, 0.98);
-    border: 1px solid rgba(255, 188, 199, 0.30);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(178, 58, 83, 0.99),
+        stop: 1 rgba(104, 29, 47, 0.99)
+    );
+    border: 1px solid rgba(255, 219, 226, 0.58);
+    color: #ffffff;
 }
 
 #titleBarCloseButton:pressed {
@@ -492,11 +502,11 @@ QScrollArea#perfScroll {
 #perfSidebar::item:hover:!selected {
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(67, 117, 156, 0.34),
-        stop: 1 rgba(37, 80, 120, 0.18)
+        stop: 0 rgba(90, 154, 202, 0.50),
+        stop: 1 rgba(42, 96, 146, 0.28)
     );
-    border: 1px solid rgba(206, 241, 255, 0.18);
-    border-left: 4px solid rgba(227, 247, 255, 0.42);
+    border: 1px solid rgba(226, 247, 255, 0.32);
+    border-left: 4px solid rgba(245, 251, 255, 0.72);
     color: #ffffff;
     font-weight: 900;
 }
@@ -515,7 +525,59 @@ QScrollArea#perfScroll {
 
 #perfCard:hover,
 #detailSection:hover {
-    border: 1px solid rgba(168, 232, 255, 0.28);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(8, 13, 18, 0.99),
+        stop: 0.55 rgba(5, 9, 14, 0.97),
+        stop: 1 rgba(3, 6, 10, 0.99)
+    );
+    border: 1px solid rgba(220, 246, 255, 0.50);
+}
+
+#perfCard[metricRole="cpu"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(24, 92, 138, 1.0),
+        stop: 1 rgba(9, 26, 39, 1.0)
+    );
+    border: 1px solid rgba(231, 249, 255, 0.98);
+}
+
+#perfCard[metricRole="memory"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(18, 98, 75, 1.0),
+        stop: 1 rgba(7, 24, 18, 1.0)
+    );
+    border: 1px solid rgba(232, 255, 242, 0.96);
+}
+
+#perfCard[metricRole="disk"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(128, 92, 20, 1.0),
+        stop: 1 rgba(35, 23, 7, 1.0)
+    );
+    border: 1px solid rgba(255, 243, 212, 0.98);
+}
+
+#perfCard[metricRole="network"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(108, 26, 110, 1.0),
+        stop: 1 rgba(28, 8, 31, 1.0)
+    );
+    border: 1px solid rgba(255, 223, 247, 0.96);
+}
+
+#perfCard[metricRole="gpu"]:hover,
+#perfCard[metricRole="temperature"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(129, 26, 49, 1.0),
+        stop: 1 rgba(27, 8, 12, 1.0)
+    );
+    border: 1px solid rgba(255, 232, 238, 0.98);
 }
 
 #perfCard[valueHot="true"] {
@@ -734,7 +796,14 @@ QMenu::separator {
 }
 
 #dangerButton:hover {
-    border: 1px solid rgba(255, 245, 248, 0.94);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #e65d76,
+        stop: 0.5 #ff7f9f,
+        stop: 1 #ffc1d0
+    );
+    border: 1px solid rgba(255, 249, 251, 0.98);
+    color: #ffffff;
 }
 
 #dangerButton:disabled {
@@ -758,12 +827,13 @@ QMenu::separator {
 }
 
 #secondaryButton:hover {
-    border: 1px solid rgba(155, 226, 255, 0.56);
+    border: 1px solid rgba(225, 247, 255, 0.84);
     background: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 rgba(19, 39, 62, 0.99),
-        stop: 1 rgba(10, 24, 40, 1.0)
+        stop: 0 rgba(38, 72, 110, 1.0),
+        stop: 1 rgba(15, 34, 58, 1.0)
     );
+    color: #ffffff;
 }
 
 #secondaryButton:pressed,
@@ -783,7 +853,7 @@ QMenu::separator {
 }
 
 #secondaryButton[toggleControl="true"]:checked:hover {
-    border: 1px solid rgba(222, 247, 255, 0.50);
+    border: 1px solid rgba(244, 252, 255, 0.84);
 }
 
 #secondaryButton[toggleControl="true"]:checked[text="Compact On"],
@@ -796,6 +866,16 @@ QMenu::separator {
     border: 1px solid rgba(188, 234, 255, 0.58);
 }
 
+#secondaryButton[toggleControl="true"]:checked[text="Compact On"]:hover,
+#secondaryButton[toggleControl="true"]:checked[text="Compact"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(60, 140, 188, 1.0),
+        stop: 1 rgba(94, 194, 255, 1.0)
+    );
+    border: 1px solid rgba(232, 248, 255, 0.92);
+}
+
 #secondaryButton[toggleControl="true"]:checked[text="Low Overhead On"],
 #secondaryButton[toggleControl="true"]:checked[text="Low Overhead"] {
     background: qlineargradient(
@@ -804,6 +884,16 @@ QMenu::separator {
         stop: 1 rgba(71, 184, 141, 0.99)
     );
     border: 1px solid rgba(191, 247, 219, 0.56);
+}
+
+#secondaryButton[toggleControl="true"]:checked[text="Low Overhead On"]:hover,
+#secondaryButton[toggleControl="true"]:checked[text="Low Overhead"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(58, 148, 126, 1.0),
+        stop: 1 rgba(93, 209, 166, 1.0)
+    );
+    border: 1px solid rgba(233, 255, 244, 0.92);
 }
 
 #secondaryButton[accentAction="true"] {
@@ -819,6 +909,15 @@ QMenu::separator {
     );
 }
 
+#secondaryButton[refreshProfile="high"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(228, 82, 95, 1.0),
+        stop: 1 rgba(255, 154, 166, 1.0)
+    );
+    border: 1px solid rgba(255, 242, 242, 0.98);
+}
+
 #secondaryButton[refreshProfile="normal"] {
     border: 1px solid rgba(207, 247, 255, 0.92);
     background: qlineargradient(
@@ -826,6 +925,15 @@ QMenu::separator {
         stop: 0 rgba(62, 137, 198, 0.99),
         stop: 1 rgba(106, 204, 255, 0.99)
     );
+}
+
+#secondaryButton[refreshProfile="normal"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(79, 160, 224, 1.0),
+        stop: 1 rgba(130, 218, 255, 1.0)
+    );
+    border: 1px solid rgba(241, 250, 255, 0.98);
 }
 
 #secondaryButton[refreshProfile="low"] {
@@ -837,6 +945,15 @@ QMenu::separator {
     );
 }
 
+#secondaryButton[refreshProfile="low"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(216, 156, 45, 1.0),
+        stop: 1 rgba(255, 205, 92, 1.0)
+    );
+    border: 1px solid rgba(255, 247, 225, 0.98);
+}
+
 #secondaryButton[refreshProfile="paused"] {
     border: 1px solid rgba(167, 179, 192, 0.34);
     background: qlineargradient(
@@ -844,6 +961,15 @@ QMenu::separator {
         stop: 0 rgba(58, 66, 77, 0.98),
         stop: 1 rgba(90, 100, 111, 0.98)
     );
+}
+
+#secondaryButton[refreshProfile="paused"]:hover {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 rgba(82, 92, 104, 1.0),
+        stop: 1 rgba(115, 126, 140, 1.0)
+    );
+    border: 1px solid rgba(228, 235, 242, 0.56);
 }
 
 #secondaryButton[menuControl="true"] {

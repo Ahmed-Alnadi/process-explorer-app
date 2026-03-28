@@ -29,6 +29,10 @@ from ui.processes_tab import ProcessesTab
 from ui.performance_tab import PerformanceTab
 from ui.services_tab import ServicesTab
 
+STARTUP_REFRESH_PROFILE = "Low"
+STARTUP_COMPACT_MODE = True
+STARTUP_LOW_OVERHEAD_MODE = True
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -36,13 +40,9 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("CodexTaskManager", "TaskManagerClone")
         self._base_window_title = "Nadzilla PTM"
         self._is_admin = self._detect_admin_state()
-        self._refresh_profile_name = self.settings.value(
-            "main/refresh_profile",
-            DEFAULT_REFRESH_PROFILE,
-            type=str,
-        )
-        self._low_overhead_mode = self.settings.value("main/low_overhead_mode", False, type=bool)
-        self._compact_mode = self.settings.value("main/compact_mode", False, type=bool)
+        self._refresh_profile_name = STARTUP_REFRESH_PROFILE
+        self._low_overhead_mode = STARTUP_LOW_OVERHEAD_MODE
+        self._compact_mode = STARTUP_COMPACT_MODE
         self._runtime_paused = False
         self._drag_active = False
         self._drag_offset = QPoint()

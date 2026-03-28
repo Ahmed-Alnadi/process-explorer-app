@@ -1,6 +1,0 @@
-sandbox_mode = "workspace-write"
-
-[trusted_projects]
-paths = [
-    "\\\\?\\C:\\Users\\Nadzilla\\Downloads\\HARDRIVE\\apps"
-]
